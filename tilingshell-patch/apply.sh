@@ -15,6 +15,7 @@ rm -rf "build/$UUID"; mkdir "build/$UUID"
 unzip -q build/upstream-18.0.zip -d "build/$UUID"
 patch -d "build/$UUID" -p1 --no-backup-if-mismatch < tilingshell-patch/tilingshell-18.0.patch
 glib-compile-schemas "build/$UUID/schemas"
+core/build.sh   # the Rust core (WebAssembly) + its loader into build/$UUID/utils
 echo "built build/$UUID"
 if [ "${1:-}" = --install ]; then
   DEST="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$UUID"

@@ -1,8 +1,6 @@
-// node test-adjacent.mjs : checks isAdjacent from the live resizeManager.js
-import { readFileSync } from "fs";
-import assert from "assert";
-const src = readFileSync(new URL("../build/tilingshell@ferrarodomenico.com/components/tilingsystem/resizeManager.js", import.meta.url), "utf8");
-const [isAdjacent, isCollinear] = new Function(src.match(/function isAdjacent[\s\S]*?\n}\n/)[0] + src.match(/function isCollinear[\s\S]*?\n}\n/)[0] + "return [isAdjacent, isCollinear];")();
+// gjs -m tests/test-adjacent.mjs : isAdjacent + isCollinear (Rust, through freeSpace.js)
+import { isAdjacent, isCollinear } from "../build/tilingshell@ferrarodomenico.com/utils/freeSpace.js";
+const assert = (c, m) => { if (!c) throw new Error(m); };
 const R = (x, y, width, height) => ({ x, y, width, height });
 const left = R(0, 1631, 360, 929), right = R(317, 1681, 806, 879);
 assert(isAdjacent(left, right, "right", 10), "small overlap (43 px) links");
@@ -20,4 +18,4 @@ assert(isCollinear(M, L, "top", 10) && isCollinear(M, Rt, "top", 10), "side wind
 assert(!isCollinear(M, R(0, 400, 465, 400), "top", 10), "top edge elsewhere does not");
 assert(!isCollinear(M, R(0, 1000, 465, 300), "top", 10), "window not beside does not");
 assert(!isCollinear(M, R(2400, 215, 300, 600), "top", 10), "same line but not touching does not");
-console.log("isAdjacent + isCollinear: all ok");
+print("isAdjacent + isCollinear: all ok");

@@ -8,9 +8,28 @@ multi-monitor desktop with portrait and small screens. Two parts:
 2. **Tiling Shell patch**: a patch set for [Tiling Shell](https://github.com/domferr/tilingshell)
    **18.0** by Domenico Ferraro, which changes how tiling, dragging and resizing behave.
 
+The placement logic itself is **Rust** (`core/`), built to WebAssembly and run inside
+GNOME Shell by a small JS loader (`core/js/nero.js`). GNOME Shell only lets JavaScript
+move windows, so the extensions stay JS for the signals and window calls, and ask the
+Rust core where things go. The call is synchronous and in-process (no daemon, no D-Bus);
+a Rust panic becomes a JS exception and cannot take the shell down.
+
+## 0. Build the Rust core
+
+Needs Rust (edition 2024) with the WebAssembly target:
+
+```sh
+rustup target add wasm32-unknown-unknown
+./core/build.sh       # builds nero_core.wasm and copies it + nero.js into both extensions
+cd core && cargo test # the Rust tests
+```
+
+`apply.sh` (below) runs `core/build.sh` itself.
+
 ## 1. keep-onscreen
 
 ```sh
+./core/build.sh
 cp -r keep-onscreen/keep-onscreen@LudaLunizz ~/.local/share/gnome-shell/extensions/
 # log out and back in (Wayland), then:
 gnome-extensions enable keep-onscreen@LudaLunizz
@@ -22,7 +41,7 @@ Only acts once per window, on its first frame. Maximized and full-screen windows
 
 ```sh
 ./tilingshell-patch/apply.sh            # download 18.0 (sha256-checked), patch into build/
-./tests/run.sh                          # pure-logic tests (needs gjs + node)
+./tests/run.sh                          # logic tests through the wasm (needs gjs)
 ./tilingshell-patch/apply.sh --install  # replace your installed Tiling Shell (old copy kept as .bak-<date>)
 ```
 
@@ -42,7 +61,9 @@ overwrites the patch**; run `apply.sh --install` again (the patch is made for 18
 | Layout editor per screen | In the layout editor, Tab / Shift+Tab switch to the next/previous monitor. Esc reliably closes dialog, then editor. |
 | Line link (L) | In the layout editor, L joins the line nearest the pointer across columns (one slider moves all pieces) or splits it per column again. |
 
-New files: `utils/freeSpace.js`, `components/layout/lineGroups.js`. Some older code paths
+New files: `utils/freeSpace.js`, `components/layout/lineGroups.js` (thin wrappers around
+the Rust core; the logic is in `core/src/free_space.rs`, `line_groups.rs` and `resize.rs`),
+plus `utils/nero.js` and `utils/nero_core.wasm` from `core/build.sh`. Some older code paths
 (automatic refill / push-aside) are still present in the patch but switched off by an early `return`.
 
 ### Testing without logging out

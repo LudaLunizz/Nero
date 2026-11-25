@@ -1,6 +1,6 @@
 diff -ruN a/components/editor/layoutEditor.js b/components/editor/layoutEditor.js
 --- a/components/editor/layoutEditor.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/editor/layoutEditor.js	2026-11-25 04:18:45.070176138 +0100
++++ b/components/editor/layoutEditor.js	2026-11-25 19:04:45.511661863 +0100
 @@ -1,5 +1,5 @@
  import { registerGObjectClass } from "../../utils/gjs.js";
 -import { GObject, St, Clutter, Shell } from "../../gi/ext.js";
@@ -129,182 +129,71 @@ diff -ruN a/components/editor/layoutEditor.js b/components/editor/layoutEditor.j
      this._sliders = [];
 diff -ruN a/components/layout/lineGroups.js b/components/layout/lineGroups.js
 --- a/components/layout/lineGroups.js	1970-01-01 01:00:00.000000000 +0100
-+++ b/components/layout/lineGroups.js	2026-11-25 04:18:45.070225678 +0100
-@@ -0,0 +1,171 @@
-+// Local patch (2026-11-18): pure helpers for the layout editor, no GNOME imports.
-+// A "line" is one tile edge shared by tiles on both sides. The tiles' `groups`
-+// say which lines move together: tiles sharing a group id belong to one slider.
-+// toggleLineLink() lets the user join the pieces of one straight line across
-+// columns (one slider moves them all) or split it into separate pieces again.
++++ b/components/layout/lineGroups.js	2026-11-25 19:04:45.511902261 +0100
+@@ -0,0 +1,60 @@
++// Local patch (2026-11-18): line groups for the layout editor. A "line" is one
++// tile edge shared by tiles on both sides; tiles sharing a group id belong to
++// one slider. The logic is Rust, in Nero's core/src/line_groups.rs, run as
++// WebAssembly through utils/nero.js. Rust refers to tiles by index; these
++// wrappers hand back the tile objects themselves, as the old JS did.
++import { call } from "../../utils/nero.js";
 +
-+const EPS = 0.002;
++const plain = (t) => ({ x: t.x, y: t.y, width: t.width, height: t.height, groups: [...t.groups] });
 +
-+const near = (a, b) => Math.abs(a - b) < EPS;
-+
-+// Tiles on both sides of the line at coordinate c, pieces = connected parts.
-+// vertical=true -> line x=c (tiles left/right of it); else line y=c.
-+function _segmentsAt(tiles, vertical, c) {
-+  const pos = (t) => (vertical ? t.x : t.y);
-+  const len = (t) => (vertical ? t.width : t.height);
-+  const apos = (t) => (vertical ? t.y : t.x);
-+  const alen = (t) => (vertical ? t.height : t.width);
-+  const prev = tiles.filter((t) => near(pos(t) + len(t), c));
-+  const next = tiles.filter((t) => near(pos(t), c));
-+  const parent = new Map();
-+  const find = (t) => {
-+    while (parent.get(t) !== t) {
-+      parent.set(t, parent.get(parent.get(t)));
-+      t = parent.get(t);
-+    }
-+    return t;
++// chain with tile indexes (from Rust) -> chain with tile objects
++const toObjects = (tiles, ch) => ch && {
++  ...ch,
++  segments: ch.segments.map((s) => ({ ...s, prev: s.prev.map((i) => tiles[i]), next: s.next.map((i) => tiles[i]) })),
++};
++// chain with tile objects -> chain with tile indexes
++const toIndexes = (tiles, ch) => {
++  const ix = (t) => {
++    const i = tiles.indexOf(t);
++    if (i < 0) throw new Error("lineGroups: chain tile is not in tiles");
++    return i;
 +  };
-+  const touched = new Set();
-+  for (const p of prev) for (const n of next) {
-+    const overlap = Math.min(apos(p) + alen(p), apos(n) + alen(n)) - Math.max(apos(p), apos(n));
-+    if (overlap <= EPS) continue;
-+    for (const t of [p, n]) if (!parent.has(t)) parent.set(t, t);
-+    parent.set(find(p), find(n));
-+    touched.add(p);
-+    touched.add(n);
-+  }
-+  const comps = new Map();
-+  for (const t of touched) {
-+    const r = find(t);
-+    if (!comps.has(r)) comps.set(r, []);
-+    comps.get(r).push(t);
-+  }
-+  return [...comps.values()].map((members) => ({
-+    prev: members.filter((t) => prev.includes(t)),
-+    next: members.filter((t) => next.includes(t)),
-+    from: Math.min(...members.map(apos)),
-+    to: Math.max(...members.map((t) => apos(t) + alen(t))),
-+  }));
-+}
++  return { ...ch, segments: ch.segments.map((s) => ({ ...s, prev: s.prev.map(ix), next: s.next.map(ix) })) };
++};
 +
 +// Every internal straight line as chains of touching pieces.
 +// Returns [{vertical, c, from, to, segments:[{prev,next,from,to}]}]
 +export function findChains(tiles) {
-+  const out = [];
-+  for (const vertical of [true, false]) {
-+    const coords = [];
-+    for (const t of tiles) {
-+      const c = vertical ? t.x + t.width : t.y + t.height;
-+      if (c > EPS && c < 1 - EPS && !coords.some((k) => near(k, c))) coords.push(c);
-+    }
-+    for (const c of coords) {
-+      const segs = _segmentsAt(tiles, vertical, c).sort((a, b) => a.from - b.from);
-+      let chain = null;
-+      for (const s of segs) {
-+        if (chain && s.from <= chain.to + EPS) {
-+          chain.segments.push(s);
-+          chain.to = Math.max(chain.to, s.to);
-+        } else {
-+          chain = { vertical, c, from: s.from, to: s.to, segments: [s] };
-+          out.push(chain);
-+        }
-+      }
-+    }
-+  }
-+  return out;
++  return call("findChains", tiles.map(plain)).map((ch) => toObjects(tiles, ch));
 +}
 +
 +// Chain nearest to a pointer (normalised 0..1 coords) within maxPx pixels.
 +export function pickChain(tiles, nx, ny, width, height, maxPx) {
-+  let best = null;
-+  let bestD = maxPx;
-+  for (const ch of findChains(tiles)) {
-+    let d;
-+    if (ch.vertical) {
-+      const dx = Math.abs(nx - ch.c) * width;
-+      const dy = (ny < ch.from ? ch.from - ny : ny > ch.to ? ny - ch.to : 0) * height;
-+      d = Math.hypot(dx, dy);
-+    } else {
-+      const dy = Math.abs(ny - ch.c) * height;
-+      const dx = (nx < ch.from ? ch.from - nx : nx > ch.to ? nx - ch.to : 0) * width;
-+      d = Math.hypot(dx, dy);
-+    }
-+    if (d <= bestD) {
-+      bestD = d;
-+      best = ch;
-+    }
-+  }
-+  return best;
-+}
-+
-+// Group ids that run along this segment: shared by a tile on each side.
-+function _segmentIds(seg) {
-+  const ids = new Set();
-+  for (const p of seg.prev) for (const n of seg.next)
-+    for (const g of p.groups) if (n.groups.includes(g)) ids.add(g);
-+  return ids;
-+}
-+
-+function _chainTiles(chain) {
-+  const set = new Set();
-+  for (const s of chain.segments) {
-+    s.prev.forEach((t) => set.add(t));
-+    s.next.forEach((t) => set.add(t));
-+  }
-+  return [...set];
-+}
-+
-+function _freshId(tiles) {
-+  let max = 0;
-+  for (const t of tiles) for (const g of t.groups) max = Math.max(max, g);
-+  return max + 1;
++  return toObjects(tiles, call("pickChain", tiles.map(plain), nx, ny, width, height, maxPx));
 +}
 +
 +// "attached" when one group id runs through every piece of a multi-piece chain.
++// The chain's tiles are read as they are now.
 +export function isAttached(chain) {
-+  if (chain.segments.length < 2) return false;
-+  const all = chain.segments.map(_segmentIds);
-+  return [...all[0]].some((g) => all.every((s) => s.has(g)));
++  const tiles = [...new Set(chain.segments.flatMap((s) => [...s.prev, ...s.next]))];
++  return call("isAttached", tiles.map(plain), toIndexes(tiles, chain));
 +}
 +
 +// Toggle the chain: attached -> one group per piece; else -> one group for all.
 +// Mutates tile.groups. Returns "separated" | "attached" | "single".
 +export function toggleChain(tiles, chain) {
-+  const members = _chainTiles(chain);
-+  const old = new Set();
-+  chain.segments.forEach((s) => _segmentIds(s).forEach((g) => old.add(g)));
-+  const strip = () => members.forEach((t) => {
-+    t.groups = t.groups.filter((g) => !old.has(g));
++  const { result, groups } = call("toggleChain", tiles.map(plain), toIndexes(tiles, chain));
++  tiles.forEach((t, i) => {
++    const g = groups[i];
++    if (g.length !== t.groups.length || g.some((id, k) => id !== t.groups[k])) t.groups = g;
 +  });
-+  if (isAttached(chain)) {
-+    strip();
-+    let id = _freshId(tiles);
-+    for (const s of chain.segments) {
-+      for (const t of [...s.prev, ...s.next]) t.groups.push(id);
-+      id++;
-+    }
-+    return "separated";
-+  }
-+  if (chain.segments.length === 1 && old.size === 1) return "single";
-+  strip();
-+  const id = _freshId(tiles);
-+  members.forEach((t) => t.groups.push(id));
-+  return "attached";
++  return result;
 +}
 +
 +// For the editor: orientation + coordinate of one group's line when every tile
-+// of the group touches the same line (works for chains of several pieces,
-+// which the stock detection misreads). null -> use the stock detection.
++// of the group touches the same line. null -> use the stock detection.
 +// Returns {vertical, c, tile} where tile is a member whose edge lies on it.
 +export function groupLine(groupTiles) {
-+  for (const vertical of [true, false]) {
-+    for (const t of groupTiles) {
-+      const c = vertical ? t.x + t.width : t.y + t.height;
-+      const prev = groupTiles.filter((u) => near(vertical ? u.x + u.width : u.y + u.height, c));
-+      const next = groupTiles.filter((u) => near(vertical ? u.x : u.y, c));
-+      if (prev.length && next.length && prev.length + next.length === groupTiles.length)
-+        return { vertical, c, tile: prev[0] };
-+    }
-+  }
-+  return null;
++  const found = call("groupLine", groupTiles.map(plain));
++  return found && { ...found, tile: groupTiles[found.tile] };
 +}
 diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tilePreview.js
 --- a/components/tilepreview/tilePreview.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilepreview/tilePreview.js	2026-11-25 04:18:45.070870114 +0100
++++ b/components/tilepreview/tilePreview.js	2026-11-25 19:04:45.512255208 +0100
 @@ -87,14 +87,16 @@
      this._showing = true;
      this.show();
@@ -326,46 +215,22 @@ diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tileP
        this.set_position(this.innerX, this.innerY);
 diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/resizeManager.js
 --- a/components/tilingsystem/resizeManager.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilingsystem/resizeManager.js	2026-11-25 04:18:45.070924644 +0100
-@@ -1,8 +1,36 @@
++++ b/components/tilingsystem/resizeManager.js	2026-11-25 19:04:45.512292887 +0100
+@@ -1,8 +1,12 @@
 -import { St, Meta } from "../../gi/ext.js";
 +import { St, Meta, Clutter } from "../../gi/ext.js";
  import SignalHandling from "../../utils/signalHandling.js";
  import Settings from "../../settings/settings.js";
  import { getWindows } from "../../utils/ui.js";
  
-+// Is rect o a neighbour on `side` of rect w? Its near edge may lie up to
-+// `reach` px beyond w's edge (gap), or overlap w by up to a quarter of the
-+// narrower window; the two must share at least 8 px along that edge.
-+function isAdjacent(w, o, side, reach) {
-+  const horiz = side === "left" || side === "right";
-+  const [p, len, op, olen] = horiz ? [w.x, w.width, o.x, o.width] : [w.y, w.height, o.y, o.height];
-+  const shared = horiz ? Math.min(w.y + w.height, o.y + o.height) - Math.max(w.y, o.y) : Math.min(w.x + w.width, o.x + o.width) - Math.max(w.x, o.x);
-+  if (shared < 8) return false; // a corner touch is not a shared edge
-+  const maxOverlap = Math.min(len, olen) / 4;
-+  if (side === "right" || side === "bottom") {
-+    const edge = p + len;
-+    return op <= edge + reach && op >= edge - maxOverlap && op + olen > edge;
-+  }
-+  const oEnd = op + olen;
-+  return oEnd >= p - reach && oEnd <= p + maxOverlap && op < p;
-+}
-+
-+// Is o beside w with its `side` edge on the same line (within tol px)? Then
-+// a Ctrl-resize of that edge moves o's edge too: the whole line moves.
-+function isCollinear(w, o, side, reach) {
-+  const tol = Math.max(reach, 16);
-+  const end = (r, h) => (h ? r.x + r.width : r.y + r.height);
-+  const diff = side === "top" ? o.y - w.y : side === "left" ? o.x - w.x : side === "bottom" ? end(o, false) - end(w, false) : end(o, true) - end(w, true);
-+  if (Math.abs(diff) > tol) return false;
-+  const [a, b] = side === "top" || side === "bottom" ? ["left", "right"] : ["top", "bottom"];
-+  return isAdjacent(w, o, a, reach) || isAdjacent(w, o, b, reach);
-+}
++// Local patch: isAdjacent / isCollinear (Ctrl-linked resize) are Rust now, in
++// Nero's core/src/resize.rs; see utils/freeSpace.js.
++import { isAdjacent, isCollinear } from "../../utils/freeSpace.js";
 +
  class ResizingManager {
    _signals;
    constructor() {
-@@ -18,6 +46,8 @@
+@@ -18,6 +22,8 @@
        (_display, window, grabOp) => {
          const moving = grabOp === Meta.GrabOp.KEYBOARD_MOVING || grabOp === Meta.GrabOp.MOVING;
          if (moving || !Settings.RESIZE_COMPLEMENTING_WINDOWS) return;
@@ -374,7 +239,7 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
          this._onWindowResizingBegin(window, grabOp & ~1024);
        }
      );
-@@ -37,7 +67,8 @@
+@@ -37,7 +43,8 @@
    }
  
    _onWindowResizingBegin(window, grabOp) {
@@ -384,7 +249,7 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
        return;
      const verticalSide = [false, 0];
      const horizontalSide = [false, 0];
-@@ -83,7 +114,7 @@
+@@ -83,7 +90,7 @@
      }
      if (!verticalSide[0] && !horizontalSide[0]) return;
      const otherTiledWindows = getWindows().filter(
@@ -393,7 +258,7 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
      );
      if (otherTiledWindows.length === 0) return;
      const verticalAdjacentWindows = verticalSide[0] ? this._findAdjacent(
-@@ -180,26 +211,19 @@
+@@ -180,26 +187,19 @@
      }
      const oppositeSide = this._oppositeSide(side);
      const newRemainingWindows = /* @__PURE__ */ new Set();
@@ -429,7 +294,7 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
        } else {
          newRemainingWindows.add(otherWin);
        }
-@@ -213,6 +237,13 @@
+@@ -213,6 +213,13 @@
          result.push(recursionResult);
          newRemainingWindows.delete(recursionResult[0]);
        });
@@ -445,7 +310,7 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
    }
 diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/tilingManager.js
 --- a/components/tilingsystem/tilingManager.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilingsystem/tilingManager.js	2026-11-25 04:18:45.071062763 +0100
++++ b/components/tilingsystem/tilingManager.js	2026-11-25 19:04:45.512399996 +0100
 @@ -27,6 +27,7 @@
  import { KeyBindingsDirection } from "../../keybindings.js";
  import TilingShellWindowManager from "../../components/windowManager/tilingShellWindowManager.js";
@@ -857,7 +722,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      let bestTileIndex = 0;
 diff -ruN a/components/window_menu/overriddenWindowMenu.js b/components/window_menu/overriddenWindowMenu.js
 --- a/components/window_menu/overriddenWindowMenu.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/window_menu/overriddenWindowMenu.js	2026-11-25 04:18:45.071532111 +0100
++++ b/components/window_menu/overriddenWindowMenu.js	2026-11-25 19:04:45.512809883 +0100
 @@ -170,6 +170,13 @@
          );
        });
@@ -884,7 +749,7 @@ diff -ruN a/components/window_menu/overriddenWindowMenu.js b/components/window_m
  });
 diff -ruN a/components/windowsSuggestions/tilingLayoutWithSuggestions.js b/components/windowsSuggestions/tilingLayoutWithSuggestions.js
 --- a/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-25 04:18:45.071489181 +0100
++++ b/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-25 19:04:45.512770283 +0100
 @@ -1,7 +1,7 @@
  import { registerGObjectClass } from "../../utils/gjs.js";
 -import { Clutter } from "../../gi/ext.js";
@@ -951,7 +816,7 @@ diff -ruN a/components/windowsSuggestions/tilingLayoutWithSuggestions.js b/compo
        this._previews.indexOf(preview),
 diff -ruN a/extension.js b/extension.js
 --- a/extension.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/extension.js	2026-11-25 04:18:45.071660320 +0100
++++ b/extension.js	2026-11-25 19:04:45.512919982 +0100
 @@ -19,7 +19,7 @@
   * SPDX-License-Identifier: GPL-3.0-or-later
   */
@@ -1007,7 +872,7 @@ diff -ruN a/extension.js b/extension.js
      this._keybindings?.destroy();
 diff -ruN a/indicator/indicator.js b/indicator/indicator.js
 --- a/indicator/indicator.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/indicator/indicator.js	2026-11-25 04:18:45.072208908 +0100
++++ b/indicator/indicator.js	2026-11-25 19:04:45.513404147 +0100
 @@ -1,4 +1,4 @@
 -import { St, Clutter, Shell, Gio } from "../gi/ext.js";
 +import { St, Clutter, Shell, Gio, Meta } from "../gi/ext.js";
@@ -1177,7 +1042,7 @@ diff -ruN a/indicator/indicator.js b/indicator/indicator.js
      this._layoutEditor?.destroy();
 diff -ruN a/stylesheet.css b/stylesheet.css
 --- a/stylesheet.css	2026-10-17 12:39:08.000000000 +0200
-+++ b/stylesheet.css	2026-11-25 04:18:45.072379307 +0100
++++ b/stylesheet.css	2026-11-25 19:04:45.513577245 +0100
 @@ -205,3 +205,8 @@
    border-radius-value: 6px;
    border-width-value: 1px;
@@ -1189,422 +1054,34 @@ diff -ruN a/stylesheet.css b/stylesheet.css
 +}
 diff -ruN a/utils/freeSpace.js b/utils/freeSpace.js
 --- a/utils/freeSpace.js	1970-01-01 01:00:00.000000000 +0100
-+++ b/utils/freeSpace.js	2026-11-25 04:18:45.074309907 +0100
-@@ -0,0 +1,417 @@
-+// Local patch (2026-10-27): fit a window into the space that is actually
-+// free between tiled windows instead of the fixed layout tile.
-+// Works on plain {x, y, width, height} objects so it can be tested outside
-+// GNOME Shell (see ~/.config/tilingshell-backup/test-freeSpace.mjs).
++++ b/utils/freeSpace.js	2026-11-25 19:04:45.515215160 +0100
+@@ -0,0 +1,29 @@
++// Local patch: window placement logic (free space, hard frames, fill free
++// space, fluid drag shape, Ctrl-linked resize). The logic itself is Rust, in
++// Nero's core/ (core/src/free_space.rs, resize.rs), run as WebAssembly through
++// nero.js. These wrappers keep the old JS signatures so the callers stay as
++// they were. Rects can be plain objects or Mtk.Rectangle.
++import { call, plainRect as R, plainRects as Rs } from "./nero.js";
 +
-+const MIN_KEEP = 0.33;
++const P = (p) => ({ x: p.x, y: p.y });
 +
-+function center(r) {
-+  return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-+}
++const isTileVacant = (tile, occupied) => call("isTileVacant", R(tile), Rs(occupied));
++const fitToFreeSpace = (tile, occupied, workArea, vacantTiles = []) =>
++  call("fitToFreeSpace", R(tile), Rs(occupied), R(workArea), Rs(vacantTiles));
++const touchingRects = (rect, rects, tol = 10) => call("touchingRects", R(rect), Rs(rects), tol);
++const cutAway = (rect, keep) => call("cutAway", R(rect), R(keep));
++const resolveOverlaps = (rects, priority, tiles = []) => call("resolveOverlaps", Rs(rects), priority, Rs(tiles));
++const fillGaps = (rects, workArea) => call("fillGaps", Rs(rects), R(workArea));
++// returns the free tiles themselves (callers compare them by identity)
++const freeTiles = (tiles, rects) => call("freeTiles", Rs(tiles), Rs(rects)).map((i) => tiles[i]);
++const framesOf = (tiles, rect) => call("framesOf", Rs(tiles), R(rect));
++const placeInFrames = (tiles, others, target) => call("placeInFrames", Rs(tiles), Rs(others), R(target));
++const refillFrames = (tiles, wins) => call("refillFrames", Rs(tiles), Rs(wins));
++const growIntoFreeSpace = (rect, others, area, tol = 10) => call("growIntoFreeSpace", R(rect), Rs(others), R(area), tol);
++const openSpaceAt = (p, obstacles, area) => call("openSpaceAt", P(p), Rs(obstacles), R(area));
++const fluidShape = (tiles, obstacles, area, p, minSize = 0.33) =>
++  call("fluidShape", Rs(tiles), Rs(obstacles), R(area), P(p), minSize);
++const isAdjacent = (w, o, side, reach) => call("isAdjacent", R(w), R(o), side, reach);
++const isCollinear = (w, o, side, reach) => call("isCollinear", R(w), R(o), side, reach);
 +
-+function contains(r, p) {
-+  return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height;
-+}
-+
-+function overlapSize(a, b) {
-+  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
-+  const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
-+  return w > 0 && h > 0 ? { w, h } : null;
-+}
-+
-+// A tile is taken when a window covers its center or most of its area, so a
-+// neighbour that grew a bit into it does not make it look occupied.
-+function isTileVacant(tile, occupied) {
-+  const c = center(tile);
-+  return !occupied.some((o) => {
-+    if (contains(o, c)) return true;
-+    const ov = overlapSize(tile, o);
-+    return ov !== null && ov.w * ov.h > (tile.width * tile.height) / 2;
-+  });
-+}
-+
-+// tile: the layout tile in pixels; occupied: frame rects of the other tiled
-+// windows on this monitor; workArea: monitor work area; vacantTiles: the other
-+// empty tiles, which the window must not grow into.
-+function fitToFreeSpace(tile, occupied, _workArea, vacantTiles = []) {
-+  // A window covering most of the tile is the one being replaced (or sits
-+  // underneath): it is not an edge to snap against.
-+  const covering = [];
-+  occupied = occupied.filter((o) => {
-+    const ov = overlapSize(tile, o);
-+    const keep = ov === null || ov.w * ov.h <= (tile.width * tile.height) / 2;
-+    if (!keep) covering.push(o);
-+    return keep;
-+  });
-+  let left = tile.x, top = tile.y;
-+  let right = tile.x + tile.width, bottom = tile.y + tile.height;
-+
-+  // Shrink away from windows that grew into the tile.
-+  for (const o of occupied) {
-+    const ov = overlapSize({ x: left, y: top, width: right - left, height: bottom - top }, o);
-+    if (!ov) continue;
-+    const oc = center(o);
-+    const rc = { x: (left + right) / 2, y: (top + bottom) / 2 };
-+    if (ov.h <= ov.w) {
-+      if (oc.y < rc.y) top = Math.max(top, o.y + o.height);
-+      else bottom = Math.min(bottom, o.y);
-+    } else {
-+      if (oc.x < rc.x) left = Math.max(left, o.x + o.width);
-+      else right = Math.min(right, o.x);
-+    }
-+  }
-+  if (right - left < tile.width * MIN_KEEP || bottom - top < tile.height * MIN_KEEP)
-+    return { ...tile };
-+
-+  // Grow into gaps left by windows that shrank, up to the next window, but
-+  // never across another empty tile and never past the tile to a bare edge.
-+  const blocked = (strip) => strip.width > 0 && strip.height > 0 &&
-+    (vacantTiles.some((v) => contains(strip, center(v))) || covering.some((o) => overlapSize(strip, o)));
-+  const spansX = (o) => o.x < right && o.x + o.width > left;
-+  const spansY = (o) => o.y < bottom && o.y + o.height > top;
-+
-+  let edge = null;
-+  for (const o of occupied) if (spansX(o) && o.y + o.height <= top) edge = Math.max(edge ?? -Infinity, o.y + o.height);
-+  if (edge !== null && !blocked({ x: left, y: edge, width: right - left, height: top - edge })) top = edge;
-+
-+  edge = null;
-+  for (const o of occupied) if (spansX(o) && o.y >= bottom) edge = Math.min(edge ?? Infinity, o.y);
-+  if (edge !== null && !blocked({ x: left, y: bottom, width: right - left, height: edge - bottom })) bottom = edge;
-+
-+  edge = null;
-+  for (const o of occupied) if (spansY(o) && o.x + o.width <= left) edge = Math.max(edge ?? -Infinity, o.x + o.width);
-+  if (edge !== null && !blocked({ x: edge, y: top, width: left - edge, height: bottom - top })) left = edge;
-+
-+  edge = null;
-+  for (const o of occupied) if (spansY(o) && o.x >= right) edge = Math.min(edge ?? Infinity, o.x);
-+  if (edge !== null && !blocked({ x: right, y: top, width: edge - right, height: bottom - top })) right = edge;
-+
-+  return { x: left, y: top, width: right - left, height: bottom - top };
-+}
-+
-+// Indexes of the rects that share an edge with rect (within tol pixels).
-+function touchingRects(rect, rects, tol = 10) {
-+  const r = { l: rect.x, t: rect.y, r: rect.x + rect.width, b: rect.y + rect.height };
-+  const result = [];
-+  rects.forEach((o, i) => {
-+    const l = o.x, t = o.y, rr = o.x + o.width, b = o.y + o.height;
-+    const spanX = l < r.r && rr > r.l;
-+    const spanY = t < r.b && b > r.t;
-+    if ((spanX && (Math.abs(b - r.t) <= tol || Math.abs(t - r.b) <= tol)) ||
-+        (spanY && (Math.abs(rr - r.l) <= tol || Math.abs(l - r.r) <= tol)))
-+      result.push(i);
-+  });
-+  return result;
-+}
-+
-+
-+// --- Fill the screen ---------------------------------------------------------
-+
-+// Cut rect away from keep. Keeps the larger part; returns null when keep
-+// covers rect completely.
-+function cutAway(rect, keep) {
-+  const ov = overlapSize(rect, keep);
-+  if (!ov) return { ...rect };
-+  let l = rect.x, t = rect.y, r = rect.x + rect.width, b = rect.y + rect.height;
-+  const kl = keep.x, kt = keep.y, kr = keep.x + keep.width, kb = keep.y + keep.height;
-+  const vertical = ov.h <= ov.w;
-+  if (vertical) {
-+    const above = kt - t, below = b - kb;
-+    if (above <= 0 && below <= 0) return null;
-+    if (above >= below) b = kt; else t = kb;
-+  } else {
-+    const leftPart = kl - l, rightPart = r - kr;
-+    if (leftPart <= 0 && rightPart <= 0) return null;
-+    if (leftPart >= rightPart) r = kl; else l = kr;
-+  }
-+  return { x: l, y: t, width: r - l, height: b - t };
-+}
-+
-+// rects: tiled windows; priority: higher wins (most recently placed);
-+// tiles: layout tiles in pixels. Returns new rects; null for a window that
-+// was replaced (covered, or what is left of it holds no tile).
-+function resolveOverlaps(rects, priority, tiles = []) {
-+  const out = rects.map((r) => ({ ...r }));
-+  const order = rects.map((_, i) => i).sort((a, b) => priority[b] - priority[a]);
-+  for (let a = 0; a < order.length; a++) {
-+    const keep = out[order[a]];
-+    if (!keep) continue;
-+    for (let z = a + 1; z < order.length; z++) {
-+      const i = order[z];
-+      if (out[i] && overlapSize(out[i], keep)) {
-+        out[i] = cutAway(out[i], keep);
-+        // a window left with only a sliver was replaced, not squeezed
-+        if (out[i] && tiles.length > 0 && !tiles.some((t) => contains(out[i], center(t)))) out[i] = null;
-+      }
-+    }
-+  }
-+  return out;
-+}
-+
-+// Grow every rect into empty space up to the next rect or the screen edge.
-+// Two rects facing the same gap split it.
-+function fillGaps(rects, workArea) {
-+  const out = rects.map((r) => (r ? { ...r } : null));
-+  const L = (r) => r.x, T = (r) => r.y, Rt = (r) => r.x + r.width, B = (r) => r.y + r.height;
-+  const spanX = (a, b) => a.x < Rt(b) && Rt(a) > b.x;
-+  const spanY = (a, b) => a.y < B(b) && B(a) > b.y;
-+  // nearest obstacle from rect i in a direction: [edge, index or -1]
-+  const nearest = (i, dir) => {
-+    const r = out[i];
-+    let edge = dir === 'down' ? B(workArea) : dir === 'up' ? T(workArea) : dir === 'right' ? Rt(workArea) : L(workArea);
-+    let who = -1;
-+    out.forEach((o, j) => {
-+      if (!o || j === i) return;
-+      if (dir === 'down' && spanX(o, r) && T(o) >= B(r) && T(o) < edge) { edge = T(o); who = j; }
-+      if (dir === 'up' && spanX(o, r) && B(o) <= T(r) && B(o) > edge) { edge = B(o); who = j; }
-+      if (dir === 'right' && spanY(o, r) && L(o) >= Rt(r) && L(o) < edge) { edge = L(o); who = j; }
-+      if (dir === 'left' && spanY(o, r) && Rt(o) <= L(r) && Rt(o) > edge) { edge = Rt(o); who = j; }
-+    });
-+    return [edge, who];
-+  };
-+  const opposite = { down: 'up', up: 'down', left: 'right', right: 'left' };
-+  for (let round = 0; round < 4; round++) {
-+    let changed = false;
-+    out.forEach((r, i) => {
-+      if (!r) return;
-+      for (const dir of ['down', 'up', 'right', 'left']) {
-+        const [edge, who] = nearest(i, dir);
-+        let target = edge;
-+        const mine = dir === 'down' ? B(r) : dir === 'up' ? T(r) : dir === 'right' ? Rt(r) : L(r);
-+        if (who >= 0 && edge !== mine) {
-+          // split the gap when the other window also faces only us: move
-+          // both edges to the middle at once
-+          const [backEdge] = nearest(who, opposite[dir]);
-+          if (backEdge === mine) {
-+            target = Math.round((edge + mine) / 2);
-+            const o = out[who];
-+            if (dir === 'down') { o.height += o.y - target; o.y = target; }
-+            if (dir === 'up') o.height = target - o.y;
-+            if (dir === 'right') { o.width += o.x - target; o.x = target; }
-+            if (dir === 'left') o.width = target - o.x;
-+          }
-+        }
-+        if (dir === 'down' && target > B(r)) { r.height = target - r.y; changed = true; }
-+        if (dir === 'up' && target < T(r)) { r.height += r.y - target; r.y = target; changed = true; }
-+        if (dir === 'right' && target > Rt(r)) { r.width = target - r.x; changed = true; }
-+        if (dir === 'left' && target < L(r)) { r.width += r.x - target; r.x = target; changed = true; }
-+      }
-+    });
-+    if (!changed) break;
-+  }
-+  return out;
-+}
-+
-+// Each window belongs to the tile it matches best (intersection over union);
-+// tiles that belong to no window are free, even when a grown window covers them.
-+function freeTiles(tiles, rects) {
-+  const taken = new Set();
-+  rects.forEach((r) => {
-+    let best = -1, bestScore = 0;
-+    tiles.forEach((t, i) => {
-+      const ov = overlapSize(t, r);
-+      if (!ov) return;
-+      const inter = ov.w * ov.h;
-+      const score = inter / (t.width * t.height + r.width * r.height - inter);
-+      if (score > bestScore) { bestScore = score; best = i; }
-+    });
-+    if (best >= 0) taken.add(best);
-+  });
-+  return tiles.filter((_, i) => !taken.has(i));
-+}
-+
-+// --- Hard frames (2026-10-28) ------------------------------------------------
-+// The layout tiles are fixed frames. A window sits in the frames whose centre
-+// it covers; windows never get cut or stretched into other shapes.
-+
-+function framesOf(tiles, rect) {
-+  const out = [];
-+  tiles.forEach((t, i) => {
-+    if (contains(rect, center(t))) out.push(i);
-+  });
-+  return out;
-+}
-+
-+function bounds(rects) {
-+  const l = Math.min(...rects.map((r) => r.x)), t = Math.min(...rects.map((r) => r.y));
-+  const r = Math.max(...rects.map((o) => o.x + o.width)), b = Math.max(...rects.map((o) => o.y + o.height));
-+  return { x: l, y: t, width: r - l, height: b - t };
-+}
-+
-+function nearestFree(tiles, taken, rect) {
-+  const c = center(rect);
-+  let best = -1, bestD = Infinity;
-+  tiles.forEach((t, k) => {
-+    if (taken.has(k)) return;
-+    const tc = center(t);
-+    const d = (tc.x - c.x) ** 2 + (tc.y - c.y) ** 2;
-+    if (d < bestD) { bestD = d; best = k; }
-+  });
-+  return best;
-+}
-+
-+// A window is placed on target. others: the other tiled windows' rects,
-+// topmost first. Returns [{i, rect}] for the ones that have to move: a window
-+// in the target's frames slides to the nearest empty frame. With no empty
-+// frame left it keeps the frames it has outside the target (when they form a
-+// rectangle), or else stays where it is, under the new window (a new layer).
-+function placeInFrames(tiles, others, target) {
-+  const want = new Set(framesOf(tiles, target));
-+  const frames = others.map((r) => framesOf(tiles, r));
-+  const hit = others.map((r, i) => {
-+    if (frames[i].length > 0) return frames[i].some((f) => want.has(f));
-+    // a window that sits in no frame: moves when it mostly overlaps the target
-+    const ov = overlapSize(r, target);
-+    return ov !== null && ov.w * ov.h > Math.min(r.width * r.height, target.width * target.height) / 2;
-+  });
-+  const taken = new Set(want);
-+  frames.forEach((fs, i) => {
-+    if (!hit[i]) fs.forEach((f) => taken.add(f));
-+  });
-+  const moves = [];
-+  others.forEach((r, i) => {
-+    if (!hit[i]) return;
-+    const k = nearestFree(tiles, taken, r);
-+    if (k >= 0) {
-+      taken.add(k);
-+      moves.push({ i, rect: { ...tiles[k] } });
-+      return;
-+    }
-+    const rest = frames[i].filter((f) => !want.has(f) && !taken.has(f));
-+    if (rest.length === 0) return;
-+    const b = bounds(rest.map((f) => tiles[f]));
-+    if (framesOf(tiles, b).every((f) => rest.includes(f))) {
-+      rest.forEach((f) => taken.add(f));
-+      moves.push({ i, rect: b });
-+    }
-+  });
-+  return moves;
-+}
-+
-+// After a window closes or minimizes: windows hidden under another one (all
-+// their frames covered by windows above) slide into the empty frames. wins:
-+// tiled windows' rects, topmost first. Nothing else moves or grows.
-+function refillFrames(tiles, wins) {
-+  const frames = wins.map((r) => framesOf(tiles, r));
-+  const taken = new Set();
-+  const hidden = [];
-+  wins.forEach((_r, i) => {
-+    if (frames[i].length > 0 && frames[i].every((f) => taken.has(f))) hidden.push(i);
-+    frames[i].forEach((f) => taken.add(f));
-+  });
-+  const moves = [];
-+  for (const i of hidden) {
-+    const k = nearestFree(tiles, taken, wins[i]);
-+    if (k < 0) break;
-+    taken.add(k);
-+    moves.push({ i, rect: { ...tiles[k] } });
-+  }
-+  return moves;
-+}
-+
-+// Window menu "Fill free space": the window grows left/right, then up/down,
-+// until it meets another window or the screen edge. Windows it already
-+// overlaps (layers underneath) do not stop it. tol: touching edges count as
-+// touching, not overlapping.
-+function growIntoFreeSpace(rect, others, area, tol = 10) {
-+  const L = area.x, T = area.y, R = area.x + area.width, B = area.y + area.height;
-+  let l = Math.max(L, rect.x), t = Math.max(T, rect.y);
-+  let r = Math.min(R, rect.x + rect.width), b = Math.min(B, rect.y + rect.height);
-+  const blockers = others.filter((o) => {
-+    const ov = overlapSize(o, rect);
-+    return !ov || ov.w <= tol || ov.h <= tol;
-+  });
-+  const inRows = (o) => o.y < b - tol && o.y + o.height > t + tol;
-+  const inCols = (o) => o.x < r - tol && o.x + o.width > l + tol;
-+  const side = blockers.filter(inRows);
-+  l = Math.max(L, ...side.filter((o) => o.x + o.width <= l + tol).map((o) => o.x + o.width));
-+  r = Math.min(R, ...side.filter((o) => o.x >= r - tol).map((o) => o.x));
-+  const ends = blockers.filter(inCols);
-+  t = Math.max(T, ...ends.filter((o) => o.y + o.height <= t + tol).map((o) => o.y + o.height));
-+  b = Math.min(B, ...ends.filter((o) => o.y >= b - tol).map((o) => o.y));
-+  return { x: l, y: t, width: r - l, height: b - t };
-+}
-+
-+// --- Fluid drag shape (2026-10-28) -------------------------------------------
-+// While dragging, the preview takes the shape of the open space under the
-+// pointer instead of the fixed tile. The layout stays the reference: when
-+// the open space holds two or more tiles, the shape is the tile under the
-+// pointer, stretched out to the edge of the open space on the sides where no
-+// other tile of that space lies.
-+
-+// Largest empty rectangle around point p: grow sideways then up/down, and
-+// up/down then sideways; keep the bigger one.
-+function openSpaceAt(p, obstacles, area) {
-+  const L = area.x, T = area.y, R = area.x + area.width, B = area.y + area.height;
-+  const grow = (horizontalFirst) => {
-+    let l = L, t = T, r = R, b = B;
-+    const sideways = () => {
-+      for (const o of obstacles) {
-+        if (!(o.y < b && o.y + o.height > t)) continue;
-+        if (o.x + o.width <= p.x) l = Math.max(l, o.x + o.width);
-+        if (o.x > p.x) r = Math.min(r, o.x);
-+      }
-+    };
-+    const upDown = () => {
-+      for (const o of obstacles) {
-+        if (!(o.x < r && o.x + o.width > l)) continue;
-+        if (o.y + o.height <= p.y) t = Math.max(t, o.y + o.height);
-+        if (o.y > p.y) b = Math.min(b, o.y);
-+      }
-+    };
-+    // the first pass only looks at the pointer's row (or column)
-+    if (horizontalFirst) { t = b = p.y; sideways(); t = T; b = B; upDown(); }
-+    else { l = r = p.x; upDown(); l = L; r = R; sideways(); }
-+    return { x: l, y: t, width: r - l, height: b - t };
-+  };
-+  const a = grow(true), c = grow(false);
-+  return a.width * a.height >= c.width * c.height ? a : c;
-+}
-+
-+function intersect(a, b) {
-+  const l = Math.max(a.x, b.x), t = Math.max(a.y, b.y);
-+  const r = Math.min(a.x + a.width, b.x + b.width), bt = Math.min(a.y + a.height, b.y + b.height);
-+  return r > l && bt > t ? { x: l, y: t, width: r - l, height: bt - t } : null;
-+}
-+
-+// tiles: layout tiles in pixels; obstacles: the other visible windows.
-+// Returns null when the pointer is over a window or the open space is too
-+// small to be useful: then the plain tile under the pointer is used.
-+function fluidShape(tiles, obstacles, area, p, minSize = 0.33) {
-+  if (obstacles.some((o) => contains(o, p))) return null;
-+  const free = openSpaceAt(p, obstacles, area);
-+  // free tiles that reach into the open space; a tile mostly covered by a
-+  // window is not free
-+  const inside = tiles.filter((t) => {
-+    const i = intersect(t, free);
-+    return i && i.width > 2 && i.height > 2 && isTileVacant(t, obstacles);
-+  });
-+  if (inside.length <= 1) {
-+    const under = tiles.find((t) => contains(t, p));
-+    if (inside.length === 0 && under &&
-+        (free.width < under.width * minSize || free.height < under.height * minSize))
-+      return null;
-+    return free;
-+  }
-+  let home = inside.find((t) => contains(t, p));
-+  if (!home) {
-+    let best = Infinity;
-+    for (const t of inside) {
-+      const c = center(t), d = (c.x - p.x) ** 2 + (c.y - p.y) ** 2;
-+      if (d < best) { best = d; home = t; }
-+    }
-+  }
-+  const s = intersect(home, free);
-+  let l = s.x, t = s.y, r = s.x + s.width, b = s.y + s.height;
-+  const others = inside.filter((o) => o !== home);
-+  const tol = 2;
-+  const rows = (o) => o.y < b - tol && o.y + o.height > t + tol;
-+  const cols = (o) => o.x < r - tol && o.x + o.width > l + tol;
-+  if (!others.some((o) => rows(o) && o.x + o.width <= l + tol)) l = free.x;
-+  if (!others.some((o) => rows(o) && o.x >= r - tol)) r = free.x + free.width;
-+  if (!others.some((o) => cols(o) && o.y + o.height <= t + tol)) t = free.y;
-+  if (!others.some((o) => cols(o) && o.y >= b - tol)) b = free.y + free.height;
-+  return { x: l, y: t, width: r - l, height: b - t };
-+}
-+
-+export { fluidShape, openSpaceAt, growIntoFreeSpace, fitToFreeSpace, isTileVacant, touchingRects, cutAway, resolveOverlaps, fillGaps, freeTiles, framesOf, placeInFrames, refillFrames };
++export { fluidShape, openSpaceAt, growIntoFreeSpace, fitToFreeSpace, isTileVacant, touchingRects, cutAway, resolveOverlaps, fillGaps, freeTiles, framesOf, placeInFrames, refillFrames, isAdjacent, isCollinear };
