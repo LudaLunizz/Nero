@@ -1,8 +1,10 @@
 // Keep On Screen: on a new window's first frame, shrink and move it into the work area
 // of the monitor it opened on. Useful with portrait or small monitors, where apps open at
 // their usual size and mutter centres them, so part of the window ends up off-screen.
+// The fit itself is Rust (Nero's core/src/fit.rs), run as WebAssembly through nero.js.
 import Meta from 'gi://Meta';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {call, plainRect} from './nero.js';
 
 const TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG];
 
@@ -12,13 +14,10 @@ function fit(window) {
     const monitor = window.get_monitor();
     if (monitor < 0)
         return;
-    const wa = window.get_work_area_for_monitor(monitor);
     const f = window.get_frame_rect();
-    const width = Math.min(f.width, wa.width), height = Math.min(f.height, wa.height);
-    const x = Math.min(Math.max(f.x, wa.x), wa.x + wa.width - width);
-    const y = Math.min(Math.max(f.y, wa.y), wa.y + wa.height - height);
-    if (x !== f.x || y !== f.y || width !== f.width || height !== f.height)
-        window.move_resize_frame(false, x, y, width, height);
+    const r = call('fitToWorkArea', plainRect(f), plainRect(window.get_work_area_for_monitor(monitor)));
+    if (r.x !== f.x || r.y !== f.y || r.width !== f.width || r.height !== f.height)
+        window.move_resize_frame(false, r.x, r.y, r.width, r.height);
 }
 
 export default class KeepOnScreen extends Extension {

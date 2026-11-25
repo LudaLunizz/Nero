@@ -1,1 +1,4 @@
 build/
+core/target/
+keep-onscreen/keep-onscreen@LudaLunizz/nero.js
+keep-onscreen/keep-onscreen@LudaLunizz/nero_core.wasm
