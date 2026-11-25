@@ -34,6 +34,7 @@ overwrites the patch**; run `apply.sh --install` again (the patch is made for 18
 | Feature | How it works |
 |---|---|
 | Exact placement | A window dropped on a tile gets exactly that tile. Windows already there stay put underneath (a new layer); nothing gets pushed around or refilled automatically. |
+| No window suggestions | Tiling Shell normally offers your other windows for the frames still empty after a drop: they fade out of their place and fly into those frames. Switched off, so windows below and on other screens stay where they are. |
 | Fluid drag preview | While dragging, the preview is a rounded shape that morphs to the largest open space around the pointer (other windows are obstacles); over a window it falls back to the plain tile. |
 | Fill free space | Super + right-click on a window, or "Fill free space" in the window menu: the window grows left/right, then up/down, until it meets other windows or the screen edge. (Super + right-click needs `resize-with-right-button` off, the GNOME default.) |
 | Ctrl-linked resize | Resizing normally moves one window. Hold Ctrl when you grab an edge and every touching window on that monitor resizes with it, including neighbours that overlap slightly and windows whose edge lies on the same line. |

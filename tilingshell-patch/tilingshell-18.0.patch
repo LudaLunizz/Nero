@@ -1,6 +1,6 @@
 diff -ruN a/components/editor/layoutEditor.js b/components/editor/layoutEditor.js
---- a/components/editor/layoutEditor.js	2026-11-25 03:48:14.750237037 +0100
-+++ b/components/editor/layoutEditor.js	2026-11-25 03:48:14.755487161 +0100
+--- a/components/editor/layoutEditor.js	2026-10-17 12:39:11.000000000 +0200
++++ b/components/editor/layoutEditor.js	2026-11-25 04:18:45.070176138 +0100
 @@ -1,5 +1,5 @@
  import { registerGObjectClass } from "../../utils/gjs.js";
 -import { GObject, St, Clutter, Shell } from "../../gi/ext.js";
@@ -129,7 +129,7 @@ diff -ruN a/components/editor/layoutEditor.js b/components/editor/layoutEditor.j
      this._sliders = [];
 diff -ruN a/components/layout/lineGroups.js b/components/layout/lineGroups.js
 --- a/components/layout/lineGroups.js	1970-01-01 01:00:00.000000000 +0100
-+++ b/components/layout/lineGroups.js	2026-11-25 03:48:14.756296467 +0100
++++ b/components/layout/lineGroups.js	2026-11-25 04:18:45.070225678 +0100
 @@ -0,0 +1,171 @@
 +// Local patch (2026-11-18): pure helpers for the layout editor, no GNOME imports.
 +// A "line" is one tile edge shared by tiles on both sides. The tiles' `groups`
@@ -303,8 +303,8 @@ diff -ruN a/components/layout/lineGroups.js b/components/layout/lineGroups.js
 +  return null;
 +}
 diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tilePreview.js
---- a/components/tilepreview/tilePreview.js	2026-11-25 03:48:14.750543405 +0100
-+++ b/components/tilepreview/tilePreview.js	2026-11-25 03:48:14.756774625 +0100
+--- a/components/tilepreview/tilePreview.js	2026-10-17 12:39:11.000000000 +0200
++++ b/components/tilepreview/tilePreview.js	2026-11-25 04:18:45.070870114 +0100
 @@ -87,14 +87,16 @@
      this._showing = true;
      this.show();
@@ -325,8 +325,8 @@ diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tileP
      } else {
        this.set_position(this.innerX, this.innerY);
 diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/resizeManager.js
---- a/components/tilingsystem/resizeManager.js	2026-11-25 03:48:14.750608565 +0100
-+++ b/components/tilingsystem/resizeManager.js	2026-11-25 03:48:14.757143323 +0100
+--- a/components/tilingsystem/resizeManager.js	2026-10-17 12:39:11.000000000 +0200
++++ b/components/tilingsystem/resizeManager.js	2026-11-25 04:18:45.070924644 +0100
 @@ -1,8 +1,36 @@
 -import { St, Meta } from "../../gi/ext.js";
 +import { St, Meta, Clutter } from "../../gi/ext.js";
@@ -444,8 +444,8 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
      return result;
    }
 diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/tilingManager.js
---- a/components/tilingsystem/tilingManager.js	2026-11-25 03:48:14.750651345 +0100
-+++ b/components/tilingsystem/tilingManager.js	2026-11-25 03:48:14.757465991 +0100
+--- a/components/tilingsystem/tilingManager.js	2026-10-17 12:39:11.000000000 +0200
++++ b/components/tilingsystem/tilingManager.js	2026-11-25 04:18:45.071062763 +0100
 @@ -27,6 +27,7 @@
  import { KeyBindingsDirection } from "../../keybindings.js";
  import TilingShellWindowManager from "../../components/windowManager/tilingShellWindowManager.js";
@@ -568,7 +568,18 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      this._easeWindowRect(window, desiredWindowRect);
      if (wasSnapAssistingLayout && Settings.SNAP_ASSIST_SYNC_LAYOUT) {
        GlobalState.get().setSelectedLayoutOfMonitor(
-@@ -784,6 +830,37 @@
+@@ -738,6 +784,10 @@
+   }
+ 
+   _openWindowsSuggestions(window, windowDesiredRect, monitorIndex, layout, innerGaps, outerGaps, scalingFactor) {
++    // 2026-11-25 (user): with empty frames left after a drop, the suggestions
++    // pulled the windows underneath out of their frames (faded out, flown into
++    // the empty frames as previews, moved on a click). No automatic movement.
++    return;
+     const tiledWindows = [];
+     const nontiledWindows = [];
+     getWindows().forEach((extWin) => {
+@@ -784,6 +834,37 @@
        destRect.width,
        destRect.height
      );
@@ -606,7 +617,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
    }
  
    _onSnapAssist(_, tile, layoutId) {
-@@ -792,13 +869,18 @@
+@@ -792,13 +873,18 @@
        this._snapAssistingInfo.update(void 0);
        return;
      }
@@ -626,7 +637,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      const currentWs = global.workspaceManager.get_active_workspace();
      const tilingLayout = this._workspaceTilingLayout.get(currentWs);
      if (!tilingLayout) return;
-@@ -891,17 +973,20 @@
+@@ -891,17 +977,20 @@
      this.openSelectionTilePreview(edgeTile, false, true, window);
    }
  
@@ -649,7 +660,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      const gaps = buildTileGaps(
        scaledRect,
        tilingLayout.innerGaps,
-@@ -948,6 +1033,22 @@
+@@ -948,6 +1037,22 @@
      this._easeWindowRectFromTile(tile, window);
    }
  
@@ -672,7 +683,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
    onSpanAllTiles(window) {
      this._easeWindowRectFromTile(
        new Tile({
-@@ -961,6 +1062,138 @@
+@@ -961,6 +1066,138 @@
      );
    }
  
@@ -811,7 +822,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
    _autoTile(window, windowCreated) {
      if (window.get_monitor() !== this._monitor.index) return;
      if (window === null || window.windowType !== Meta.WindowType.NORMAL || window.get_transient_for() !== null || window.is_attached_dialog() || window.minimized || window.maximizedHorizontally || window.maximizedVertically)
-@@ -972,11 +1205,11 @@
+@@ -972,11 +1209,11 @@
        const windowActor = window.get_compositor_private();
        const id = windowActor.connect("first-frame", () => {
          if (!window.minimized && !window.maximizedHorizontally && !window.maximizedVertically && window.get_transient_for() === null && !window.is_attached_dialog())
@@ -825,7 +836,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      }
    }
  
-@@ -991,12 +1224,12 @@
+@@ -991,12 +1228,12 @@
      const workArea = Main.layoutManager.getWorkAreaForMonitor(
        window.get_monitor()
      );
@@ -845,8 +856,8 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      vacantTiles.sort((a, b) => a.x - b.x);
      let bestTileIndex = 0;
 diff -ruN a/components/window_menu/overriddenWindowMenu.js b/components/window_menu/overriddenWindowMenu.js
---- a/components/window_menu/overriddenWindowMenu.js	2026-11-25 03:48:14.750936713 +0100
-+++ b/components/window_menu/overriddenWindowMenu.js	2026-11-25 03:48:14.758265108 +0100
+--- a/components/window_menu/overriddenWindowMenu.js	2026-10-17 12:39:11.000000000 +0200
++++ b/components/window_menu/overriddenWindowMenu.js	2026-11-25 04:18:45.071532111 +0100
 @@ -170,6 +170,13 @@
          );
        });
@@ -872,8 +883,8 @@ diff -ruN a/components/window_menu/overriddenWindowMenu.js b/components/window_m
    }
  });
 diff -ruN a/components/windowsSuggestions/tilingLayoutWithSuggestions.js b/components/windowsSuggestions/tilingLayoutWithSuggestions.js
---- a/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-25 03:48:14.750867614 +0100
-+++ b/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-25 03:48:14.758003879 +0100
+--- a/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-10-17 12:39:11.000000000 +0200
++++ b/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-25 04:18:45.071489181 +0100
 @@ -1,7 +1,7 @@
  import { registerGObjectClass } from "../../utils/gjs.js";
 -import { Clutter } from "../../gi/ext.js";
@@ -939,8 +950,8 @@ diff -ruN a/components/windowsSuggestions/tilingLayoutWithSuggestions.js b/compo
      const removed = this._previews.splice(
        this._previews.indexOf(preview),
 diff -ruN a/extension.js b/extension.js
---- a/extension.js	2026-11-25 03:48:14.750984023 +0100
-+++ b/extension.js	2026-11-25 03:48:14.754602635 +0100
+--- a/extension.js	2026-10-17 12:39:11.000000000 +0200
++++ b/extension.js	2026-11-25 04:18:45.071660320 +0100
 @@ -19,7 +19,7 @@
   * SPDX-License-Identifier: GPL-3.0-or-later
   */
@@ -995,8 +1006,8 @@ diff -ruN a/extension.js b/extension.js
      this._signals = null;
      this._keybindings?.destroy();
 diff -ruN a/indicator/indicator.js b/indicator/indicator.js
---- a/indicator/indicator.js	2026-11-25 03:48:14.751337831 +0100
-+++ b/indicator/indicator.js	2026-11-25 03:48:14.759063844 +0100
+--- a/indicator/indicator.js	2026-10-17 12:39:11.000000000 +0200
++++ b/indicator/indicator.js	2026-11-25 04:18:45.072208908 +0100
 @@ -1,4 +1,4 @@
 -import { St, Clutter, Shell, Gio } from "../gi/ext.js";
 +import { St, Clutter, Shell, Gio, Meta } from "../gi/ext.js";
@@ -1165,8 +1176,8 @@ diff -ruN a/indicator/indicator.js b/indicator/indicator.js
      this._editorDialog = null;
      this._layoutEditor?.destroy();
 diff -ruN a/stylesheet.css b/stylesheet.css
---- a/stylesheet.css	2026-11-25 03:48:14.752933164 +0100
-+++ b/stylesheet.css	2026-11-25 03:48:14.754956924 +0100
+--- a/stylesheet.css	2026-10-17 12:39:08.000000000 +0200
++++ b/stylesheet.css	2026-11-25 04:18:45.072379307 +0100
 @@ -205,3 +205,8 @@
    border-radius-value: 6px;
    border-width-value: 1px;
@@ -1178,7 +1189,7 @@ diff -ruN a/stylesheet.css b/stylesheet.css
 +}
 diff -ruN a/utils/freeSpace.js b/utils/freeSpace.js
 --- a/utils/freeSpace.js	1970-01-01 01:00:00.000000000 +0100
-+++ b/utils/freeSpace.js	2026-11-25 03:48:14.761121253 +0100
++++ b/utils/freeSpace.js	2026-11-25 04:18:45.074309907 +0100
 @@ -0,0 +1,417 @@
 +// Local patch (2026-10-27): fit a window into the space that is actually
 +// free between tiled windows instead of the fixed layout tile.
