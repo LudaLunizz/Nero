@@ -2,7 +2,9 @@
 // of the monitor it opened on. Useful with portrait or small monitors, where apps open at
 // their usual size and mutter centres them, so part of the window ends up off-screen.
 // The fit itself is Rust (Nero's core/src/fit.rs), run as WebAssembly through nero.js.
+// Optional: GNOME Shell's password prompts open on one chosen monitor (password-prompt-monitor).
 import Meta from 'gi://Meta';
+import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {call, plainRect} from './nero.js';
 
@@ -20,8 +22,31 @@ function fit(window) {
         window.move_resize_frame(false, r.x, r.y, r.width, r.height);
 }
 
+// GNOME Shell's own password dialogs. Matched by class name: if GNOME renames one, that
+// prompt just opens under the pointer as before. A third-party polkit agent (for example
+// hyprpolkitagent) shows a normal window instead, which this does not touch.
+const PASSWORD_DIALOGS = ['AuthenticationDialog', 'KeyringDialog', 'NetworkSecretDialog', 'ShellMountPasswordDialog'];
+
+// Monitor index for a connector name, or -1 if it is empty or not connected.
+function monitorForConnector(connector) {
+    return connector ? global.backend.get_monitor_manager().get_monitor_for_connector(connector) : -1;
+}
+
 export default class KeepOnScreen extends Extension {
     enable() {
+        this._settings = this.getSettings();
+        const settings = this._settings;
+        const proto = ModalDialog.ModalDialog.prototype;
+        const orig = this._open = proto.open;
+        proto.open = function (...args) {
+            const ok = orig.apply(this, args);
+            if (ok && PASSWORD_DIALOGS.includes(this.constructor.name)) {
+                const idx = monitorForConnector(settings.get_string('password-prompt-monitor'));
+                if (idx >= 0)
+                    this._monitorConstraint.index = idx;
+            }
+            return ok;
+        };
         this._id = global.display.connect('window-created', (_d, window) => {
             const actor = window.get_compositor_private();
             if (!actor)
@@ -34,6 +59,9 @@ export default class KeepOnScreen extends Extension {
     }
 
     disable() {
+        ModalDialog.ModalDialog.prototype.open = this._open;
+        this._open = null;
+        this._settings = null;
         global.display.disconnect(this._id);
         this._id = 0;
     }

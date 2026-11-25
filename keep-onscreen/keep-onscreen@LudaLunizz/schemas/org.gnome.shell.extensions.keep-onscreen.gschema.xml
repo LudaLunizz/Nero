@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.keep-onscreen" path="/org/gnome/shell/extensions/keep-onscreen/">
+    <key name="password-prompt-monitor" type="s">
+      <default>''</default>
+      <summary>Monitor for password prompts</summary>
+      <description>Connector name (for example HDMI-2 or DP-1) of the monitor where GNOME Shell's password prompts open: polkit, keyring unlock, Wi-Fi/VPN secrets and encrypted disk unlock. Empty, or a monitor that is not connected: they open under the pointer as usual.</description>
+    </key>
+  </schema>
+</schemalist>
