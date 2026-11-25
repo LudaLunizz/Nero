@@ -37,6 +37,30 @@ gnome-extensions enable keep-onscreen@LudaLunizz
 
 Only acts once per window, on its first frame. Maximized and full-screen windows are left alone.
 
+The copy step above also needs the settings schema compiled once:
+`glib-compile-schemas ~/.local/share/gnome-shell/extensions/keep-onscreen@LudaLunizz/schemas`
+
+**Password prompts on one monitor (optional).** GNOME Shell opens its password prompts
+(polkit, keyring unlock, Wi-Fi/VPN secrets, encrypted disk unlock) on the monitor under the
+pointer. To always get them on one monitor, give its connector name (for example `HDMI-2`;
+`ls /sys/class/drm` lists them as `card0-HDMI-A-2`, GNOME names that `HDMI-2`):
+
+```sh
+gsettings --schemadir ~/.local/share/gnome-shell/extensions/keep-onscreen@LudaLunizz/schemas \
+  set org.gnome.shell.extensions.keep-onscreen password-prompt-monitor HDMI-2
+```
+
+Takes effect for the next prompt; set it to `''` to switch it off. If that monitor is not
+connected, prompts open as usual. This only covers GNOME Shell's own dialogs: another polkit
+agent (for example `hyprpolkitagent`, installed with Hyprland and started in every Wayland
+session) can take the polkit slot at login, and then the prompt is a normal window. Keep it
+out of GNOME with a systemd drop-in, `~/.config/systemd/user/hyprpolkitagent.service.d/not-in-gnome.conf`:
+
+```ini
+[Service]
+ExecCondition=/bin/sh -c 'case ":$XDG_CURRENT_DESKTOP:" in *:GNOME:*) exit 1;; esac'
+```
+
 ## 2. Tiling Shell 18.0 patch
 
 ```sh
