@@ -1,0 +1,11 @@
+name: Feature request
+description: Something gnome-window-fit should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you would like
+      description: What it should do, and why
+    validations:
+      required: true
