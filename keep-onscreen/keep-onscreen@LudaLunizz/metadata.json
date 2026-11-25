@@ -1,0 +1,7 @@
+{
+  "uuid": "keep-onscreen@LudaLunizz",
+  "name": "Keep On Screen",
+  "description": "Shrinks and moves new windows so they fit the monitor they open on.",
+  "shell-version": ["46", "47", "48", "49", "50"],
+  "version": 1
+}

@@ -1,0 +1,1599 @@
+diff -ruN a/components/editor/layoutEditor.js b/components/editor/layoutEditor.js
+--- a/components/editor/layoutEditor.js	2026-11-25 03:48:14.750237037 +0100
++++ b/components/editor/layoutEditor.js	2026-11-25 03:48:14.755487161 +0100
+@@ -1,5 +1,5 @@
+ import { registerGObjectClass } from "../../utils/gjs.js";
+-import { GObject, St, Clutter, Shell } from "../../gi/ext.js";
++import { GObject, St, Clutter, Shell, GLib } from "../../gi/ext.js";
+ import Settings from "../../settings/settings.js";
+ import * as Main from "resource:///org/gnome/shell/ui/main.js";
+ import {
+@@ -16,6 +16,8 @@
+ import Tile from "../layout/Tile.js";
+ import HoverLine from "./hoverLine.js";
+ import { getEventCoords } from "../../utils/gnomesupport.js";
++import { pickChain, toggleChain, groupLine } from "../layout/lineGroups.js";
++const _L = (t) => t;
+ const _LayoutEditor = class _LayoutEditor extends St.Widget {
+   _layout;
+   _containerRect;
+@@ -24,8 +26,14 @@
+   _hoverWidget;
+   _sliders;
+   _minimizedWindows;
++  _flashLabel;
++  _flashTimer;
++  _monitor;
+   constructor(layout, monitor, enableScaling) {
+     super({ styleClass: "layout-editor" });
++    this._monitor = monitor;
++    this._flashLabel = null;
++    this._flashTimer = 0;
+     Main.layoutManager.addChrome(this);
+     global.windowGroup.bind_property(
+       "visible",
+@@ -69,6 +77,7 @@
+   }
+ 
+   set layout(newLayout) {
++    this._flashLabel = null;
+     this.destroy_all_children();
+     this._sliders = [];
+     this._hoverWidget = new HoverLine(this);
+@@ -87,6 +96,16 @@
+       });
+     });
+     groups.forEach((tiles, groupdId) => {
++      // Local patch: lines joined across columns (see lineGroups.js).
++      const found = groupLine(tiles.map((t) => t.tile));
++      if (found) {
++        const owner = tiles.find((t) => t.tile === found.tile);
++        const coord2 = found.vertical ? owner.rect.x + owner.rect.width : owner.rect.y + owner.rect.height;
++        const slider2 = this._buildSlider(found.vertical, coord2, groupdId);
++        this._sliders.push(slider2);
++        tiles.forEach((editable) => slider2.addTile(editable));
++        return;
++      }
+       let lines = tiles.flatMap((t) => [
+         {
+           c: Math.round(t.tile.x * 1e3) / 1e3,
+@@ -140,6 +159,58 @@
+     });
+   }
+ 
++  // Local patch: L = join the line under the pointer with its pieces in the
++  // other columns (one slider moves them all), or split it into separate
++  // pieces again. Works on the line nearest the pointer (within 60 px).
++  toggleLineLink() {
++    const [px, py] = global.get_pointer();
++    const w = this._containerRect.width;
++    const h = this._containerRect.height;
++    const nx = (px - this.x) / w;
++    const ny = (py - this.y) / h;
++    const tiles = this._layout.tiles;
++    const chain = pickChain(tiles, nx, ny, w, h, 60);
++    if (!chain) {
++      this.flash(_L("No line near the pointer"));
++      return;
++    }
++    const result = toggleChain(tiles, chain);
++    this.layout = this._layout;
++    this.flash(
++      result === "attached"
++        ? _L("Line joined across all columns")
++        : result === "separated"
++          ? _L("Line split: every column moves on its own")
++          : _L("This line is one piece already")
++    );
++  }
++
++  // Short message at the bottom of the editor.
++  flash(text, ms = 2500) {
++    if (this._flashTimer) {
++      GLib.Source.remove(this._flashTimer);
++      this._flashTimer = 0;
++    }
++    this._flashLabel?.destroy();
++    const label = new St.Label({
++      text,
++      style: "background-color: rgba(0,0,0,0.85); color: white; padding: 8px 16px; border-radius: 12px; font-size: 13pt;"
++    });
++    this.add_child(label);
++    const [, natW] = label.get_preferred_width(-1);
++    label.set_position(
++      Math.round((this._containerRect.width - natW) / 2),
++      Math.round(this._containerRect.height - 90)
++    );
++    this._flashLabel = label;
++    this._flashTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
++      this._flashTimer = 0;
++      this._flashLabel?.destroy();
++      this._flashLabel = null;
++      return GLib.SOURCE_REMOVE;
++    });
++  }
++
+   _buildEditableTile(tile, rect) {
+     const gaps = buildTileGaps(
+       rect,
+@@ -282,6 +353,10 @@
+   }
+ 
+   _onDestroy() {
++    if (this._flashTimer) {
++      GLib.Source.remove(this._flashTimer);
++      this._flashTimer = 0;
++    }
+     this._minimizedWindows.forEach((win) => win.unminimize());
+     this.destroy_all_children();
+     this._sliders = [];
+diff -ruN a/components/layout/lineGroups.js b/components/layout/lineGroups.js
+--- a/components/layout/lineGroups.js	1970-01-01 01:00:00.000000000 +0100
++++ b/components/layout/lineGroups.js	2026-11-25 03:48:14.756296467 +0100
+@@ -0,0 +1,171 @@
++// Local patch (2026-11-18): pure helpers for the layout editor, no GNOME imports.
++// A "line" is one tile edge shared by tiles on both sides. The tiles' `groups`
++// say which lines move together: tiles sharing a group id belong to one slider.
++// toggleLineLink() lets the user join the pieces of one straight line across
++// columns (one slider moves them all) or split it into separate pieces again.
++
++const EPS = 0.002;
++
++const near = (a, b) => Math.abs(a - b) < EPS;
++
++// Tiles on both sides of the line at coordinate c, pieces = connected parts.
++// vertical=true -> line x=c (tiles left/right of it); else line y=c.
++function _segmentsAt(tiles, vertical, c) {
++  const pos = (t) => (vertical ? t.x : t.y);
++  const len = (t) => (vertical ? t.width : t.height);
++  const apos = (t) => (vertical ? t.y : t.x);
++  const alen = (t) => (vertical ? t.height : t.width);
++  const prev = tiles.filter((t) => near(pos(t) + len(t), c));
++  const next = tiles.filter((t) => near(pos(t), c));
++  const parent = new Map();
++  const find = (t) => {
++    while (parent.get(t) !== t) {
++      parent.set(t, parent.get(parent.get(t)));
++      t = parent.get(t);
++    }
++    return t;
++  };
++  const touched = new Set();
++  for (const p of prev) for (const n of next) {
++    const overlap = Math.min(apos(p) + alen(p), apos(n) + alen(n)) - Math.max(apos(p), apos(n));
++    if (overlap <= EPS) continue;
++    for (const t of [p, n]) if (!parent.has(t)) parent.set(t, t);
++    parent.set(find(p), find(n));
++    touched.add(p);
++    touched.add(n);
++  }
++  const comps = new Map();
++  for (const t of touched) {
++    const r = find(t);
++    if (!comps.has(r)) comps.set(r, []);
++    comps.get(r).push(t);
++  }
++  return [...comps.values()].map((members) => ({
++    prev: members.filter((t) => prev.includes(t)),
++    next: members.filter((t) => next.includes(t)),
++    from: Math.min(...members.map(apos)),
++    to: Math.max(...members.map((t) => apos(t) + alen(t))),
++  }));
++}
++
++// Every internal straight line as chains of touching pieces.
++// Returns [{vertical, c, from, to, segments:[{prev,next,from,to}]}]
++export function findChains(tiles) {
++  const out = [];
++  for (const vertical of [true, false]) {
++    const coords = [];
++    for (const t of tiles) {
++      const c = vertical ? t.x + t.width : t.y + t.height;
++      if (c > EPS && c < 1 - EPS && !coords.some((k) => near(k, c))) coords.push(c);
++    }
++    for (const c of coords) {
++      const segs = _segmentsAt(tiles, vertical, c).sort((a, b) => a.from - b.from);
++      let chain = null;
++      for (const s of segs) {
++        if (chain && s.from <= chain.to + EPS) {
++          chain.segments.push(s);
++          chain.to = Math.max(chain.to, s.to);
++        } else {
++          chain = { vertical, c, from: s.from, to: s.to, segments: [s] };
++          out.push(chain);
++        }
++      }
++    }
++  }
++  return out;
++}
++
++// Chain nearest to a pointer (normalised 0..1 coords) within maxPx pixels.
++export function pickChain(tiles, nx, ny, width, height, maxPx) {
++  let best = null;
++  let bestD = maxPx;
++  for (const ch of findChains(tiles)) {
++    let d;
++    if (ch.vertical) {
++      const dx = Math.abs(nx - ch.c) * width;
++      const dy = (ny < ch.from ? ch.from - ny : ny > ch.to ? ny - ch.to : 0) * height;
++      d = Math.hypot(dx, dy);
++    } else {
++      const dy = Math.abs(ny - ch.c) * height;
++      const dx = (nx < ch.from ? ch.from - nx : nx > ch.to ? nx - ch.to : 0) * width;
++      d = Math.hypot(dx, dy);
++    }
++    if (d <= bestD) {
++      bestD = d;
++      best = ch;
++    }
++  }
++  return best;
++}
++
++// Group ids that run along this segment: shared by a tile on each side.
++function _segmentIds(seg) {
++  const ids = new Set();
++  for (const p of seg.prev) for (const n of seg.next)
++    for (const g of p.groups) if (n.groups.includes(g)) ids.add(g);
++  return ids;
++}
++
++function _chainTiles(chain) {
++  const set = new Set();
++  for (const s of chain.segments) {
++    s.prev.forEach((t) => set.add(t));
++    s.next.forEach((t) => set.add(t));
++  }
++  return [...set];
++}
++
++function _freshId(tiles) {
++  let max = 0;
++  for (const t of tiles) for (const g of t.groups) max = Math.max(max, g);
++  return max + 1;
++}
++
++// "attached" when one group id runs through every piece of a multi-piece chain.
++export function isAttached(chain) {
++  if (chain.segments.length < 2) return false;
++  const all = chain.segments.map(_segmentIds);
++  return [...all[0]].some((g) => all.every((s) => s.has(g)));
++}
++
++// Toggle the chain: attached -> one group per piece; else -> one group for all.
++// Mutates tile.groups. Returns "separated" | "attached" | "single".
++export function toggleChain(tiles, chain) {
++  const members = _chainTiles(chain);
++  const old = new Set();
++  chain.segments.forEach((s) => _segmentIds(s).forEach((g) => old.add(g)));
++  const strip = () => members.forEach((t) => {
++    t.groups = t.groups.filter((g) => !old.has(g));
++  });
++  if (isAttached(chain)) {
++    strip();
++    let id = _freshId(tiles);
++    for (const s of chain.segments) {
++      for (const t of [...s.prev, ...s.next]) t.groups.push(id);
++      id++;
++    }
++    return "separated";
++  }
++  if (chain.segments.length === 1 && old.size === 1) return "single";
++  strip();
++  const id = _freshId(tiles);
++  members.forEach((t) => t.groups.push(id));
++  return "attached";
++}
++
++// For the editor: orientation + coordinate of one group's line when every tile
++// of the group touches the same line (works for chains of several pieces,
++// which the stock detection misreads). null -> use the stock detection.
++// Returns {vertical, c, tile} where tile is a member whose edge lies on it.
++export function groupLine(groupTiles) {
++  for (const vertical of [true, false]) {
++    for (const t of groupTiles) {
++      const c = vertical ? t.x + t.width : t.y + t.height;
++      const prev = groupTiles.filter((u) => near(vertical ? u.x + u.width : u.y + u.height, c));
++      const next = groupTiles.filter((u) => near(vertical ? u.x : u.y, c));
++      if (prev.length && next.length && prev.length + next.length === groupTiles.length)
++        return { vertical, c, tile: prev[0] };
++    }
++  }
++  return null;
++}
+diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tilePreview.js
+--- a/components/tilepreview/tilePreview.js	2026-11-25 03:48:14.750543405 +0100
++++ b/components/tilepreview/tilePreview.js	2026-11-25 03:48:14.756774625 +0100
+@@ -87,14 +87,16 @@
+     this._showing = true;
+     this.show();
+     if (fadeInMove) {
++      // local patch: the fluid drag shape morphs a bit slower and softer
++      const fluid = this.has_style_class_name("fluid-shape");
+       this.ease({
+         x: this.innerX,
+         y: this.innerY,
+         width: this.innerWidth,
+         height: this.innerHeight,
+         opacity: 255,
+-        duration: ease ? GlobalState.get().tilePreviewAnimationTime : 0,
+-        mode: Clutter.AnimationMode.EASE_OUT_QUAD
++        duration: ease ? fluid ? Math.max(GlobalState.get().tilePreviewAnimationTime, 220) : GlobalState.get().tilePreviewAnimationTime : 0,
++        mode: fluid ? Clutter.AnimationMode.EASE_OUT_CUBIC : Clutter.AnimationMode.EASE_OUT_QUAD
+       });
+     } else {
+       this.set_position(this.innerX, this.innerY);
+diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/resizeManager.js
+--- a/components/tilingsystem/resizeManager.js	2026-11-25 03:48:14.750608565 +0100
++++ b/components/tilingsystem/resizeManager.js	2026-11-25 03:48:14.757143323 +0100
+@@ -1,8 +1,36 @@
+-import { St, Meta } from "../../gi/ext.js";
++import { St, Meta, Clutter } from "../../gi/ext.js";
+ import SignalHandling from "../../utils/signalHandling.js";
+ import Settings from "../../settings/settings.js";
+ import { getWindows } from "../../utils/ui.js";
+ 
++// Is rect o a neighbour on `side` of rect w? Its near edge may lie up to
++// `reach` px beyond w's edge (gap), or overlap w by up to a quarter of the
++// narrower window; the two must share at least 8 px along that edge.
++function isAdjacent(w, o, side, reach) {
++  const horiz = side === "left" || side === "right";
++  const [p, len, op, olen] = horiz ? [w.x, w.width, o.x, o.width] : [w.y, w.height, o.y, o.height];
++  const shared = horiz ? Math.min(w.y + w.height, o.y + o.height) - Math.max(w.y, o.y) : Math.min(w.x + w.width, o.x + o.width) - Math.max(w.x, o.x);
++  if (shared < 8) return false; // a corner touch is not a shared edge
++  const maxOverlap = Math.min(len, olen) / 4;
++  if (side === "right" || side === "bottom") {
++    const edge = p + len;
++    return op <= edge + reach && op >= edge - maxOverlap && op + olen > edge;
++  }
++  const oEnd = op + olen;
++  return oEnd >= p - reach && oEnd <= p + maxOverlap && op < p;
++}
++
++// Is o beside w with its `side` edge on the same line (within tol px)? Then
++// a Ctrl-resize of that edge moves o's edge too: the whole line moves.
++function isCollinear(w, o, side, reach) {
++  const tol = Math.max(reach, 16);
++  const end = (r, h) => (h ? r.x + r.width : r.y + r.height);
++  const diff = side === "top" ? o.y - w.y : side === "left" ? o.x - w.x : side === "bottom" ? end(o, false) - end(w, false) : end(o, true) - end(w, true);
++  if (Math.abs(diff) > tol) return false;
++  const [a, b] = side === "top" || side === "bottom" ? ["left", "right"] : ["top", "bottom"];
++  return isAdjacent(w, o, a, reach) || isAdjacent(w, o, b, reach);
++}
++
+ class ResizingManager {
+   _signals;
+   constructor() {
+@@ -18,6 +46,8 @@
+       (_display, window, grabOp) => {
+         const moving = grabOp === Meta.GrabOp.KEYBOARD_MOVING || grabOp === Meta.GrabOp.MOVING;
+         if (moving || !Settings.RESIZE_COMPLEMENTING_WINDOWS) return;
++        // Local patch 2026-11-21: windows only resize together while Ctrl is held.
++        if ((global.get_pointer()[2] & Clutter.ModifierType.CONTROL_MASK) === 0) return;
+         this._onWindowResizingBegin(window, grabOp & ~1024);
+       }
+     );
+@@ -37,7 +67,8 @@
+   }
+ 
+   _onWindowResizingBegin(window, grabOp) {
+-    if (!window || !window.assignedTile || !this._signals)
++    // Ctrl links every touching window on this monitor, tiled or not.
++    if (!window || !this._signals)
+       return;
+     const verticalSide = [false, 0];
+     const horizontalSide = [false, 0];
+@@ -83,7 +114,7 @@
+     }
+     if (!verticalSide[0] && !horizontalSide[0]) return;
+     const otherTiledWindows = getWindows().filter(
+-      (otherWindow) => otherWindow && otherWindow.assignedTile && otherWindow !== window && !otherWindow.minimized
++      (otherWindow) => otherWindow && otherWindow !== window && !otherWindow.minimized && otherWindow.get_window_type() === Meta.WindowType.NORMAL && otherWindow.get_monitor() === window.get_monitor() && !otherWindow.maximizedHorizontally && !otherWindow.maximizedVertically && !otherWindow.is_fullscreen()
+     );
+     if (otherTiledWindows.length === 0) return;
+     const verticalAdjacentWindows = verticalSide[0] ? this._findAdjacent(
+@@ -180,26 +211,19 @@
+     }
+     const oppositeSide = this._oppositeSide(side);
+     const newRemainingWindows = /* @__PURE__ */ new Set();
++    const collinearWindows = [];
++    // Local patch 2026-11-21: a neighbour that overlaps a little (an app that
++    // cannot shrink to its frame) counts as adjacent too, see isAdjacent.
++    const sideName = { [St.Side.TOP]: "top", [St.Side.BOTTOM]: "bottom", [St.Side.LEFT]: "left", [St.Side.RIGHT]: "right" }[side];
++    const reach = side === St.Side.TOP || side === St.Side.BOTTOM ? borderRect.height : borderRect.width;
+     remainingWindows.forEach((otherWin) => {
+-      const otherWinRect = otherWin.get_frame_rect();
+-      let [hasIntersection, intersection] = otherWin.get_frame_rect().intersect(borderRect);
+-      switch (side) {
+-        case St.Side.RIGHT:
+-          hasIntersection && (hasIntersection = intersection.x <= otherWinRect.x);
+-          break;
+-        case St.Side.LEFT:
+-          hasIntersection && (hasIntersection = intersection.x + intersection.width >= otherWinRect.x + otherWinRect.width);
+-          break;
+-        case St.Side.BOTTOM:
+-          hasIntersection && (hasIntersection = intersection.y <= otherWinRect.y);
+-          break;
+-        case St.Side.TOP:
+-          hasIntersection && (hasIntersection = intersection.y + intersection.height >= otherWinRect.y + otherWinRect.height);
+-          break;
+-      }
++      const hasIntersection = isAdjacent(windowRect, otherWin.get_frame_rect(), sideName, reach);
+       if (hasIntersection) {
+         result.push([otherWin, oppositeSide]);
+         adjacentWindows.push(otherWin);
++      } else if (isCollinear(windowRect, otherWin.get_frame_rect(), sideName, reach)) {
++        result.push([otherWin, side]);
++        collinearWindows.push(otherWin);
+       } else {
+         newRemainingWindows.add(otherWin);
+       }
+@@ -213,6 +237,13 @@
+         result.push(recursionResult);
+         newRemainingWindows.delete(recursionResult[0]);
+       });
++    });
++    // follow the line on: windows beside the collinear ones, and their opposite neighbours
++    collinearWindows.forEach((otherWin) => {
++      this._findAdjacent(otherWin, side, newRemainingWindows).forEach((recursionResult) => {
++        result.push(recursionResult);
++        newRemainingWindows.delete(recursionResult[0]);
++      });
+     });
+     return result;
+   }
+diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/tilingManager.js
+--- a/components/tilingsystem/tilingManager.js	2026-11-25 03:48:14.750651345 +0100
++++ b/components/tilingsystem/tilingManager.js	2026-11-25 03:48:14.757465991 +0100
+@@ -27,6 +27,7 @@
+ import { KeyBindingsDirection } from "../../keybindings.js";
+ import TilingShellWindowManager from "../../components/windowManager/tilingShellWindowManager.js";
+ import TilingLayoutWithSuggestions from "../windowsSuggestions/tilingLayoutWithSuggestions.js";
++import { fluidShape, growIntoFreeSpace, touchingRects, freeTiles, placeInFrames, refillFrames } from "../../utils/freeSpace.js";
+ import {
+   getDefaultSeat,
+   maximizeWindow,
+@@ -140,6 +141,7 @@
+    *  - handle grabbed window's movement.
+    */
+   enable() {
++    this._enableFillScreen();
+     this._signals.connect(
+       Settings,
+       Settings.KEY_SETTING_SELECTED_LAYOUTS,
+@@ -182,6 +184,12 @@
+       global.display,
+       "grab-op-begin",
+       (_display, window, grabOp) => {
++        // the user has the window now: a pending keep-in-screen must not pull it back
++        if (window) {
++          window._tsGrabbed = true;
++          (window._tsClampIds ?? []).forEach((id) => GLib.Source.remove(id));
++          window._tsClampIds = [];
++        }
+         const moving = (grabOp & ~1024) === 1;
+         if (!moving) return;
+         this._onWindowGrabBegin(window, grabOp);
+@@ -191,6 +199,7 @@
+       global.display,
+       "grab-op-end",
+       (_display, window) => {
++        if (window) window._tsGrabbed = false;
+         if (!this._isGrabbingWindow) return;
+         this._onWindowGrabEnd(window);
+       }
+@@ -366,6 +375,8 @@
+    * Destroys the tiling manager and cleans up resources.
+    */
+   destroy() {
++    this._destroyed = true; // pending keep-in-screen timers check this
++    this._disableFillScreen();
+     if (this._movingWindowTimerId) {
+       GLib.Source.remove(this._movingWindowTimerId);
+       this._movingWindowTimerId = null;
+@@ -433,7 +444,9 @@
+         }
+       });
+     }
++    this._selectedTilesPreview.remove_style_class_name("fluid-shape");
+     this._isGrabbingWindow = true;
++    this._grabbedWindow = window;
+     this._installRmbFilterIfNeeded();
+     this._movingWindowTimerId = GLib.timeout_add(
+       GLib.PRIORITY_DEFAULT_IDLE,
+@@ -643,6 +656,20 @@
+       this._selectedTilesPreview.close(true);
+       this._snapAssistingInfo.update(void 0);
+     }
++    // Local patch: fluid shape that fills the open space under the pointer
++    if (!allowSpanMultipleTiles) {
++      const fluid = this._fluidShapeAt(currPointerPos, window);
++      if (fluid) {
++        const prev = this._selectedTilesPreview.rect;
++        if (!this._selectedTilesPreview.showing || prev.x !== fluid.x || prev.y !== fluid.y || prev.width !== fluid.width || prev.height !== fluid.height) {
++          this._selectedTilesPreview.add_style_class_name("fluid-shape");
++          tilingLayout.hoverTilesInRect(fluid, true);
++          this.openSelectionTilePreview(fluid, true, true, window);
++        }
++        return GLib.SOURCE_CONTINUE;
++      }
++      this._selectedTilesPreview.remove_style_class_name("fluid-shape");
++    }
+     if (!changedSpanMultipleTiles && isPointInsideRect(currPointerPos, this._selectedTilesPreview.rect))
+       return GLib.SOURCE_CONTINUE;
+     let selectionRect = tilingLayout.getTileBelow(
+@@ -670,13 +697,30 @@
+     const currentWs = window.get_workspace();
+     const tilingLayout = this._workspaceTilingLayout.get(currentWs);
+     if (tilingLayout) tilingLayout.close();
+-    const desiredWindowRect = buildRectangle({
++    let desiredWindowRect = buildRectangle({
+       x: this._selectedTilesPreview.innerX,
+       y: this._selectedTilesPreview.innerY,
+       width: this._selectedTilesPreview.innerWidth,
+       height: this._selectedTilesPreview.innerHeight
+     });
+-    const selectedTilesRect = this._selectedTilesPreview.rect.copy();
++    let selectedTilesRect = this._selectedTilesPreview.rect.copy();
++    const snapLayoutId = this._snapAssistingInfo.isSnapAssisting ? this._snapAssistingInfo.layoutId : void 0;
++    this._grabbedWindow = void 0;
++    if (selectedTilesRect.width > 0 && selectedTilesRect.height > 0) {
++      const fitted = this._fitRectToFreeSpace(
++        selectedTilesRect,
++        window,
++        snapLayoutId ? GlobalState.get().layouts.find((lay) => lay.id === snapLayoutId) : void 0,
++        true
++      );
++      desiredWindowRect = buildRectangle({
++        x: desiredWindowRect.x + fitted.x - selectedTilesRect.x,
++        y: desiredWindowRect.y + fitted.y - selectedTilesRect.y,
++        width: desiredWindowRect.width + fitted.width - selectedTilesRect.width,
++        height: desiredWindowRect.height + fitted.height - selectedTilesRect.height
++      });
++      selectedTilesRect = fitted;
++    }
+     this._selectedTilesPreview.close(true);
+     this._snapAssist.close(true);
+     this._lastCursorPos = null;
+@@ -700,9 +744,11 @@
+       return;
+     if (window.maximizedHorizontally || window.maximizedVertically) return;
+     window.originalSize = window.get_frame_rect().copy();
++    this._pushAsideOverlapping(selectedTilesRect, window, wasSnapAssistingLayout);
+     window.assignedTile = new Tile({
+       ...TileUtils.build_tile(selectedTilesRect, this._workArea)
+     });
++    window._tsPlacedAt = Date.now();
+     this._easeWindowRect(window, desiredWindowRect);
+     if (wasSnapAssistingLayout && Settings.SNAP_ASSIST_SYNC_LAYOUT) {
+       GlobalState.get().setSelectedLayoutOfMonitor(
+@@ -784,6 +830,37 @@
+       destRect.width,
+       destRect.height
+     );
++    if (!user_op) this._keepInWorkArea(window);
++  }
++
++  // Local patch (2026-11-14): a window that cannot shrink to its frame (its
++  // minimum size is bigger) stays at the frame's corner and sticks out past
++  // the screen edge, sometimes almost fully off-screen. Once the client has
++  // resized, slide it back so it is fully inside this monitor's work area.
++  _keepInWorkArea(window) {
++    const clamp = () => {
++      if (this._destroyed || window._tsGrabbed) return;
++      if (!window.get_compositor_private() || window.minimized || window.maximizedHorizontally || window.maximizedVertically || window.is_fullscreen()) return;
++      // 2026-11-21: no monitor check. _easeWindowRect sent it to this monitor,
++      // so a window that spilled onto another screen is pulled back too.
++      const wa = this._workArea, r = window.get_frame_rect();
++      const w = Math.min(r.width, wa.width), h = Math.min(r.height, wa.height);
++      const x = Math.max(wa.x, Math.min(r.x, wa.x + wa.width - w));
++      const y = Math.max(wa.y, Math.min(r.y, wa.y + wa.height - h));
++      if (w !== r.width || h !== r.height) window.move_resize_frame(false, x, y, w, h);
++      else if (x !== r.x || y !== r.y) window.move_frame(false, x, y);
++    };
++    // Wayland clients resize asynchronously: check after the move settles,
++    // and again for slow (XWayland) clients.
++    (window._tsClampIds ?? []).forEach((id) => GLib.Source.remove(id));
++    window._tsClampIds = [300, 900, 2000].map((ms) => {
++      const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
++        window._tsClampIds = window._tsClampIds?.filter((i) => i !== id);
++        clamp();
++        return GLib.SOURCE_REMOVE;
++      });
++      return id;
++    });
+   }
+ 
+   _onSnapAssist(_, tile, layoutId) {
+@@ -792,13 +869,18 @@
+       this._snapAssistingInfo.update(void 0);
+       return;
+     }
+-    const scaledRect = TileUtils.apply_props(tile, this._workArea);
++    let scaledRect = TileUtils.apply_props(tile, this._workArea);
+     if (scaledRect.x + scaledRect.width > this._workArea.x + this._workArea.width) {
+       scaledRect.width -= scaledRect.x + scaledRect.width - this._workArea.x - this._workArea.width;
+     }
+     if (scaledRect.y + scaledRect.height > this._workArea.y + this._workArea.height) {
+       scaledRect.height -= scaledRect.y + scaledRect.height - this._workArea.y - this._workArea.height;
+     }
++    scaledRect = this._fitRectToFreeSpace(
++      scaledRect,
++      this._grabbedWindow,
++      GlobalState.get().layouts.find((lay) => lay.id === layoutId)
++    );
+     const currentWs = global.workspaceManager.get_active_workspace();
+     const tilingLayout = this._workspaceTilingLayout.get(currentWs);
+     if (!tilingLayout) return;
+@@ -891,17 +973,20 @@
+     this.openSelectionTilePreview(edgeTile, false, true, window);
+   }
+ 
+-  _easeWindowRectFromTile(tile, window, skipAnimation = false) {
++  _easeWindowRectFromTile(tile, window, skipAnimation = false, fitFreeSpace = false) {
+     const currentWs = window.get_workspace();
+     const tilingLayout = this._workspaceTilingLayout.get(currentWs);
+     if (!tilingLayout) return;
+-    const scaledRect = TileUtils.apply_props(tile, this._workArea);
++    let scaledRect = TileUtils.apply_props(tile, this._workArea);
+     if (scaledRect.x + scaledRect.width > this._workArea.x + this._workArea.width) {
+       scaledRect.width -= scaledRect.x + scaledRect.width - this._workArea.x - this._workArea.width;
+     }
+     if (scaledRect.y + scaledRect.height > this._workArea.y + this._workArea.height) {
+       scaledRect.height -= scaledRect.y + scaledRect.height - this._workArea.y - this._workArea.height;
+     }
++    if (fitFreeSpace) scaledRect = this._fitRectToFreeSpace(scaledRect, window, void 0, true);
++    this._pushAsideOverlapping(scaledRect, window);
++    window._tsPlacedAt = Date.now();
+     const gaps = buildTileGaps(
+       scaledRect,
+       tilingLayout.innerGaps,
+@@ -948,6 +1033,22 @@
+     this._easeWindowRectFromTile(tile, window);
+   }
+ 
++  // Local patch: window menu "Fill free space". The window grows into the
++  // empty space around it, up to other windows or the screen edge.
++  onFillFreeSpace(window) {
++    const others = getWindows(window.get_workspace()).filter(
++      (other) => other && other !== window && !other.minimized && !other.maximizedVertically && !other.maximizedHorizontally && !other.is_fullscreen() && other.get_window_type() === Meta.WindowType.NORMAL && other.get_monitor() === this._monitor.index
++    );
++    const rect = growIntoFreeSpace(
++      window.get_frame_rect(),
++      others.map((o) => o.get_frame_rect()),
++      this._workArea
++    );
++    if (rect.width <= 0 || rect.height <= 0) return;
++    if (!window.assignedTile) window.originalSize = window.get_frame_rect().copy();
++    this._moveToFrame(window, rect);
++  }
++
+   onSpanAllTiles(window) {
+     this._easeWindowRectFromTile(
+       new Tile({
+@@ -961,6 +1062,138 @@
+     );
+   }
+ 
++  // Local patch: hard frames. Placing a window moves the windows in its
++  // frame(s) at once (see _pushAsideOverlapping). When a window closes or
++  // minimizes, windows hidden in a layer under another one slide into the
++  // empty frames. Nothing is cut or stretched.
++  _enableFillScreen() {
++    this._fillWatch = [];
++    this._fillTimerId = 0;
++    const watch = (obj, sig, cb) => this._fillWatch.push([obj, obj.connect(sig, cb)]);
++    const watchWindow = (w) => {
++      watch(w, "notify::minimized", () => {
++        if (w.minimized) this._scheduleFill();
++      });
++      watch(w, "unmanaged", () => {
++        this._fillWatch = this._fillWatch.filter(([obj, id]) => {
++          if (obj !== w) return true;
++          obj.disconnect(id);
++          return false;
++        });
++        this._scheduleFill();
++      });
++    };
++    global.display.list_all_windows().forEach(watchWindow);
++    watch(global.display, "window-created", (_d, w) => watchWindow(w));
++    watch(TilingShellWindowManager.get(), "maximized", () => this._scheduleFill());
++  }
++
++  _disableFillScreen() {
++    if (this._fillTimerId) GLib.Source.remove(this._fillTimerId);
++    this._fillTimerId = 0;
++    (this._fillWatch ?? []).forEach(([obj, id]) => obj.disconnect(id));
++    this._fillWatch = [];
++  }
++
++  _scheduleFill(delay = 300) {
++    if (this._fillTimerId) GLib.Source.remove(this._fillTimerId);
++    this._fillTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
++      this._fillTimerId = 0;
++      // wait while a window is dragged or the suggestions are open
++      if (this._isGrabbingWindow || this._tilingSuggestionsLayout?._showing) this._scheduleFill();
++      else this._fillScreen();
++      return GLib.SOURCE_REMOVE;
++    });
++  }
++
++  // Tiled windows on this monitor's active workspace, topmost first.
++  _tiledWindowsTopFirst(except = null, ws = global.workspaceManager.get_active_workspace()) {
++    const wins = getWindows(ws).filter(
++      (w) => w && w !== except && w.assignedTile && !w.minimized && !w.maximizedHorizontally && !w.maximizedVertically && !w.is_fullscreen() && w.get_window_type() === Meta.WindowType.NORMAL && w.get_monitor() === this._monitor.index
++    );
++    return global.display.sort_windows_by_stacking(wins).reverse();
++  }
++
++  _layoutTileRects(layout, ws) {
++    layout ??= GlobalState.get().getSelectedLayoutOfMonitor(this._monitor.index, ws.index());
++    return layout.tiles.map((t) => TileUtils.apply_props(t, this._workArea));
++  }
++
++  _moveToFrame(w, rect) {
++    const dest = buildRectangle(rect);
++    w.assignedTile = TileUtils.build_tile(dest, this._workArea);
++    w._tsPlacedAt = Date.now();
++    this._easeWindowRect(w, dest);
++  }
++
++  _fillScreen() {
++    // 2026-11-22 (user): no automatic movement; layered windows stay put after close/minimize/maximize.
++    return;
++    const ws = global.workspaceManager.get_active_workspace();
++    const wins = this._tiledWindowsTopFirst(null, ws);
++    if (wins.length < 2) return;
++    const moves = refillFrames(
++      this._layoutTileRects(void 0, ws),
++      wins.map((w) => w.get_frame_rect())
++    );
++    moves.forEach(({ i, rect }) => this._moveToFrame(wins[i], rect));
++  }
++
++  // Local patch: windows in the frame(s) a window was just placed on slide
++  // into the nearest empty frame. With every frame full they stay underneath.
++  _pushAsideOverlapping(targetRect, movingWindow, layout = void 0) {
++    // 2026-11-21 (user): windows under a drop stay where they are, as a layer.
++    // The old slide-aside code below is kept so the change is easy to undo.
++    return;
++    const ws = movingWindow.get_workspace();
++    if (!ws) return;
++    const others = this._tiledWindowsTopFirst(movingWindow, ws);
++    if (others.length === 0) return;
++    const moves = placeInFrames(
++      this._layoutTileRects(layout, ws),
++      others.map((w) => w.get_frame_rect()),
++      targetRect
++    );
++    moves.forEach(({ i, rect }) => this._moveToFrame(others[i], rect));
++  }
++
++  // Local patch: the open space under the pointer, shaped by the layout
++  // tiles (see fluidShape). Null over a window: then the plain tile is used.
++  _fluidShapeAt(pointer, window) {
++    const ws = window.get_workspace();
++    if (!ws) return null;
++    const obstacles = getWindows(ws).filter(
++      (other) => other && other !== window && !other.minimized && !other.maximizedVertically && !other.maximizedHorizontally && !other.is_fullscreen() && other.get_window_type() === Meta.WindowType.NORMAL && other.get_monitor() === this._monitor.index
++    ).map((other) => other.get_frame_rect());
++    const shape = fluidShape(
++      this._layoutTileRects(void 0, ws),
++      obstacles,
++      this._workArea,
++      pointer
++    );
++    return shape ? buildRectangle(shape) : null;
++  }
++
++  // Local patch: the window lands exactly on the picked tile(s). With
++  // adoptNeighbours, untiled windows touching it become tiled so the shared
++  // edge resizes both.
++  _fitRectToFreeSpace(rect, window, layout = void 0, adoptNeighbours = false) {
++    const others = getWindows().filter(
++      (other) => other && other !== window && !other.minimized && !other.maximizedVertically && !other.maximizedHorizontally && !other.is_fullscreen() && other.get_window_type() === Meta.WindowType.NORMAL && other.get_monitor() === this._monitor.index
++    );
++    const occupied = others.map((other) => other.get_frame_rect());
++    // exact placement: the window gets the tile(s) you picked, nothing more
++    const fitted = rect.copy();
++    if (adoptNeighbours) {
++      touchingRects(fitted, occupied).forEach((i) => {
++        if (!others[i].assignedTile) {
++          others[i].assignedTile = TileUtils.build_tile(occupied[i].copy(), this._workArea);
++        }
++      });
++    }
++    return fitted;
++  }
++
+   _autoTile(window, windowCreated) {
+     if (window.get_monitor() !== this._monitor.index) return;
+     if (window === null || window.windowType !== Meta.WindowType.NORMAL || window.get_transient_for() !== null || window.is_attached_dialog() || window.minimized || window.maximizedHorizontally || window.maximizedVertically)
+@@ -972,11 +1205,11 @@
+       const windowActor = window.get_compositor_private();
+       const id = windowActor.connect("first-frame", () => {
+         if (!window.minimized && !window.maximizedHorizontally && !window.maximizedVertically && window.get_transient_for() === null && !window.is_attached_dialog())
+-          this._easeWindowRectFromTile(vacantTile, window, true);
++          this._easeWindowRectFromTile(vacantTile, window, true, true);
+         windowActor.disconnect(id);
+       });
+     } else {
+-      this._easeWindowRectFromTile(vacantTile, window, true);
++      this._easeWindowRectFromTile(vacantTile, window, true, true);
+     }
+   }
+ 
+@@ -991,12 +1224,12 @@
+     const workArea = Main.layoutManager.getWorkAreaForMonitor(
+       window.get_monitor()
+     );
+-    const vacantTiles = tiles.filter((t) => {
+-      const tileRect = TileUtils.apply_props(t, workArea);
+-      return !tiledWindows.find(
+-        (win) => tileRect.overlap(win.get_frame_rect())
+-      );
+-    });
++    const tileRects = tiles.map((t) => TileUtils.apply_props(t, workArea));
++    const free = freeTiles(
++      tileRects,
++      tiledWindows.filter((win) => win.get_monitor() === window.get_monitor()).map((win) => win.get_frame_rect())
++    );
++    const vacantTiles = tiles.filter((_t, i) => free.includes(tileRects[i]));
+     if (vacantTiles.length === 0) return void 0;
+     vacantTiles.sort((a, b) => a.x - b.x);
+     let bestTileIndex = 0;
+diff -ruN a/components/window_menu/overriddenWindowMenu.js b/components/window_menu/overriddenWindowMenu.js
+--- a/components/window_menu/overriddenWindowMenu.js	2026-11-25 03:48:14.750936713 +0100
++++ b/components/window_menu/overriddenWindowMenu.js	2026-11-25 03:48:14.758265108 +0100
+@@ -170,6 +170,13 @@
+         );
+       });
+     }
++    // Local patch: grow into the empty space around the window
++    if (!window.maximizedHorizontally && !window.maximizedVertically && !window.is_fullscreen()) {
++      this.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
++      this.addAction(_("Fill free space"), () => {
++        _OverriddenWindowMenu.get().emit("fill-clicked", window);
++      });
++    }
+     this.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+     const layoutsPopupMenu = new PopupMenu.PopupBaseMenuItem();
+     this.addMenuItem(layoutsPopupMenu);
+@@ -235,6 +242,9 @@
+   Signals: {
+     "tile-clicked": {
+       param_types: [Tile.$gtype, Meta.Window.$gtype]
++    },
++    "fill-clicked": {
++      param_types: [Meta.Window.$gtype]
+     }
+   }
+ });
+diff -ruN a/components/windowsSuggestions/tilingLayoutWithSuggestions.js b/components/windowsSuggestions/tilingLayoutWithSuggestions.js
+--- a/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-25 03:48:14.750867614 +0100
++++ b/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-25 03:48:14.758003879 +0100
+@@ -1,7 +1,7 @@
+ import { registerGObjectClass } from "../../utils/gjs.js";
+-import { Clutter } from "../../gi/ext.js";
++import { Clutter, Meta } from "../../gi/ext.js";
+ import Layout from "../layout/Layout.js";
+-import { buildRectangle, isPointInsideRect } from "../../utils/ui.js";
++import { buildRectangle, getWindows, isPointInsideRect } from "../../utils/ui.js";
+ import * as Main from "resource:///org/gnome/shell/ui/main.js";
+ import GlobalState from "../../utils/globalState.js";
+ import SuggestedWindowPreview from "./suggestedWindowPreview.js";
+@@ -12,6 +12,7 @@
+ import TilingShellWindowManager from "../../components/windowManager/tilingShellWindowManager.js";
+ import { getEventCoords, unmaximizeWindow } from "../../utils/gnomesupport.js";
+ import TouchEventHelper from "../../utils/touch.js";
++import { isTileVacant } from "../../utils/freeSpace.js";
+ const ANIMATION_SPEED = 200;
+ const MASONRY_LAYOUT_ROW_HEIGHT = 0.31;
+ const _TilingLayoutWithSuggestions = class _TilingLayoutWithSuggestions extends LayoutWidget {
+@@ -90,9 +91,10 @@
+         width: prev.innerWidth,
+         height: prev.innerHeight
+       });
+-      return !tiledWindows.find(
+-        (win) => previewRect.overlap(
+-          win === window ? windowDesiredRect : win.get_frame_rect()
++      return isTileVacant(
++        previewRect,
++        tiledWindows.map(
++          (win) => win === window ? windowDesiredRect : win.get_frame_rect()
+         )
+       );
+     });
+@@ -250,21 +252,25 @@
+     if (nonTiledWin.minimized) nonTiledWin.unminimize();
+     const winRect = nonTiledWin.get_frame_rect();
+     nonTiledWin.originalSize = winRect.copy();
++    const previewRect = buildRectangle({
++      x: preview.innerX,
++      y: preview.innerY,
++      width: preview.innerWidth,
++      height: preview.innerHeight
++    });
++    // hard frames: the suggested window gets exactly the frame
++    const fitted = previewRect;
+     TilingShellWindowManager.easeMoveWindow({
+       window: nonTiledWin,
+       from: cloneRect,
+-      to: buildRectangle({
+-        x: preview.innerX,
+-        y: preview.innerY,
+-        width: preview.innerWidth,
+-        height: preview.innerHeight
+-      }),
++      to: fitted,
+       duration: ANIMATION_SPEED * 1.8,
+       monitorIndex
+     });
+     nonTiledWin.assignedTile = new Tile({
+       ...preview.tile
+     });
++    nonTiledWin._tsPlacedAt = Date.now();
+     suggestedWin.opacity = 0;
+     const removed = this._previews.splice(
+       this._previews.indexOf(preview),
+diff -ruN a/extension.js b/extension.js
+--- a/extension.js	2026-11-25 03:48:14.750984023 +0100
++++ b/extension.js	2026-11-25 03:48:14.754602635 +0100
+@@ -19,7 +19,7 @@
+  * SPDX-License-Identifier: GPL-3.0-or-later
+  */
+ import { Extension } from "./polyfill.js";
+-import { Gio, GLib, Meta } from "./gi/ext.js";
++import { Clutter, Gio, GLib, Meta } from "./gi/ext.js";
+ import { logger } from "./utils/logger.js";
+ import {
+   filterUnfocusableWindows,
+@@ -333,6 +333,32 @@
+         if (manager) manager.onTileFromWindowMenu(tile, window);
+       }
+     );
++    // Local patch: window menu "Fill free space"
++    this._signals.connect(
++      OverriddenWindowMenu,
++      "fill-clicked",
++      (_, window) => {
++        const manager = this._tilingManagers[window.get_monitor()];
++        if (manager) manager.onFillFreeSpace(window);
++      }
++    );
++    // Local patch: Super+right-click on a window fills the free space
++    // instead of opening the window menu. Mutter handles Super+click before
++    // the app, so it works on windows that draw their own title bar (Brave).
++    const menuManager = Main.wm._windowMenuManager;
++    if (menuManager && !this._oldShowWindowMenu) {
++      this._oldShowWindowMenu = menuManager.showWindowMenuForWindow;
++      menuManager.showWindowMenuForWindow = (window, type, rect) => {
++        const [, , mods] = global.get_pointer();
++        const superHeld = (mods & (Clutter.ModifierType.MOD4_MASK | Clutter.ModifierType.SUPER_MASK)) !== 0;
++        const manager = this._tilingManagers[window.get_monitor()];
++        if (superHeld && manager && window.get_window_type() === Meta.WindowType.NORMAL && !window.maximizedHorizontally && !window.maximizedVertically && !window.is_fullscreen()) {
++          manager.onFillFreeSpace(window);
++          return;
++        }
++        this._oldShowWindowMenu.call(menuManager, window, type, rect);
++      };
++    }
+     this._signals.connect(Settings, Settings.KEY_OVERRIDE_ALT_TAB, () => {
+       if (Settings.OVERRIDE_ALT_TAB) OverriddenAltTab.enable();
+       else OverriddenAltTab.disable();
+@@ -578,6 +604,10 @@
+   }
+ 
+   disable() {
++    if (this._oldShowWindowMenu) {
++      if (Main.wm._windowMenuManager) Main.wm._windowMenuManager.showWindowMenuForWindow = this._oldShowWindowMenu;
++      this._oldShowWindowMenu = null;
++    }
+     this._signals?.disconnect();
+     this._signals = null;
+     this._keybindings?.destroy();
+diff -ruN a/indicator/indicator.js b/indicator/indicator.js
+--- a/indicator/indicator.js	2026-11-25 03:48:14.751337831 +0100
++++ b/indicator/indicator.js	2026-11-25 03:48:14.759063844 +0100
+@@ -1,4 +1,4 @@
+-import { St, Clutter, Shell, Gio } from "../gi/ext.js";
++import { St, Clutter, Shell, Gio, Meta } from "../gi/ext.js";
+ import * as Main from "resource:///org/gnome/shell/ui/main.js";
+ import * as PanelMenu from "resource:///org/gnome/shell/ui/panelMenu.js";
+ import Settings from "../settings/settings.js";
+@@ -24,6 +24,7 @@
+   _enableScaling;
+   _path;
+   _keyPressEvent;
++  _editorMonitorIndex;
+   constructor(path, uuid) {
+     super(0.5, "Tiling Shell Indicator", false);
+     Main.panel.addToStatusArea(uuid, this, 1, "right");
+@@ -45,6 +46,7 @@
+     this._currentMenu = null;
+     this._state = 1 /* DEFAULT */;
+     this._keyPressEvent = null;
++    this._editorMonitorIndex = null;
+     this._enableScaling = false;
+     this._path = path;
+     this.connect("destroy", this._onDestroy.bind(this));
+@@ -90,7 +92,7 @@
+     } else {
+       this._layoutEditor = new LayoutEditor(
+         newLayout,
+-        Main.layoutManager.monitors[Main.layoutManager.primaryIndex],
++        this._editorMonitor(),
+         this._enableScaling
+       );
+     }
+@@ -128,7 +130,7 @@
+         } else {
+           this._layoutEditor = new LayoutEditor(
+             layCopy,
+-            Main.layoutManager.monitors[Main.layoutManager.primaryIndex],
++            this._editorMonitor(),
+             this._enableScaling
+           );
+         }
+@@ -147,6 +149,34 @@
+     this._editorDialog.open();
+   }
+ 
++  // Local patch: the layout editor works on the screen picked with Tab
++  // (default: the primary screen) instead of always the primary one.
++  _editorMonitor() {
++    const monitors = Main.layoutManager.monitors;
++    let i = this._editorMonitorIndex;
++    if (i === null || i < 0 || i >= monitors.length)
++      i = Main.layoutManager.primaryIndex;
++    this._editorMonitorIndex = i;
++    return monitors[i];
++  }
++
++  _cycleEditorMonitor(step) {
++    const monitors = Main.layoutManager.monitors;
++    if (!this._layoutEditor || monitors.length < 2) return;
++    const layout = this._layoutEditor.layout;
++    this._editorMonitorIndex = (this._editorMonitor().index + step + monitors.length) % monitors.length;
++    this._layoutEditor.destroy();
++    this._layoutEditor = new LayoutEditor(layout, this._editorMonitor(), this._enableScaling);
++    this._showEditorHint();
++  }
++
++  _showEditorHint() {
++    const n = Main.layoutManager.monitors.length;
++    const m = this._editorMonitor();
++    const screen = n > 1 ? `Screen ${m.index + 1} of ${n} (${m.width}\u00d7${m.height})   Tab: next screen   ` : "";
++    this._layoutEditor?.flash(`${screen}L: join / split the line under the pointer   Esc: cancel`, 6000);
++  }
++
+   openLayoutEditor() {
+     this.openMenu(false);
+   }
+@@ -189,6 +219,7 @@
+           global.stage.disconnect(this._keyPressEvent);
+           this._keyPressEvent = null;
+         }
++        this._releaseEscape();
+         break;
+       case 2 /* CREATE_NEW */:
+       case 3 /* EDITING_LAYOUT */:
+@@ -199,17 +230,82 @@
+           (_, event) => {
+             const symbol = event.get_key_symbol();
+             if (symbol === Clutter.KEY_Escape)
+-              this.cancelLayoutOnClick();
++              this._onEscape();
++            else if (this._layoutEditor && !this._editorDialog && (event.get_state() & (Clutter.ModifierType.CONTROL_MASK | Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK)) === 0) {
++              // Local patch: Tab / Shift+Tab = work on the next / previous
++              // screen; L = join or split the line under the pointer.
++              if (symbol === Clutter.KEY_Tab) {
++                this._cycleEditorMonitor(1);
++                return Clutter.EVENT_STOP;
++              } else if (symbol === Clutter.KEY_ISO_Left_Tab) {
++                this._cycleEditorMonitor(-1);
++                return Clutter.EVENT_STOP;
++              } else if (symbol === Clutter.KEY_l || symbol === Clutter.KEY_L) {
++                this._layoutEditor.toggleLineLink();
++                return Clutter.EVENT_STOP;
++              }
++            }
+             return Clutter.EVENT_PROPAGATE;
+           }
+         );
++        this._grabEscape();
+         this._currentMenu = new EditingMenu(this);
+         this.show();
++        this._showEditorHint();
+         break;
+     }
+   }
+ 
++  // Local patch: Esc always leaves the layout editor. The stage handler above
++  // only sees Esc while GNOME Shell has the keyboard; after a click on an app
++  // window, Esc went to the app and there was no way out. While the editor
++  // is open, Esc is grabbed as a global accelerator instead (released again
++  // when the editor closes). Esc first closes the editor's dialog if it is
++  // open, then the editor itself (cancel, nothing saved).
++  _grabEscape() {
++    if (this._escAction) return;
++    const action = global.display.grab_accelerator("Escape", Meta.KeyBindingFlags.NONE);
++    if (!action) return;
++    const name = Meta.external_binding_name_for_action(action);
++    Main.wm.allowKeybinding(name, Shell.ActionMode.ALL);
++    this._escAction = action;
++    this._escSignal = global.display.connect("accelerator-activated", (_d, act) => {
++      if (act === this._escAction) this._onEscape();
++    });
++  }
++
++  _releaseEscape() {
++    if (this._escSignal) {
++      global.display.disconnect(this._escSignal);
++      this._escSignal = null;
++    }
++    if (this._escAction) {
++      global.display.ungrab_accelerator(this._escAction);
++      Main.wm.allowKeybinding(Meta.external_binding_name_for_action(this._escAction), Shell.ActionMode.NONE);
++      this._escAction = 0;
++    }
++  }
++
++  _onEscape() {
++    if (this._editorDialog) {
++      this._editorDialog.destroy();
++      this._editorDialog = null;
++      return;
++    }
++    // Like cancelLayoutOnClick, without its menu.toggle(), which would open
++    // the panel menu when it was closed.
++    if (this.menu.isOpen) this.menu.close();
++    this._layoutEditor?.destroy();
++    this._layoutEditor = null;
++    this._setState(1 /* DEFAULT */);
++  }
++
+   _onDestroy() {
++    this._releaseEscape();
++    if (this._keyPressEvent) {
++      global.stage.disconnect(this._keyPressEvent);
++      this._keyPressEvent = null;
++    }
+     this._editorDialog?.destroy();
+     this._editorDialog = null;
+     this._layoutEditor?.destroy();
+diff -ruN a/stylesheet.css b/stylesheet.css
+--- a/stylesheet.css	2026-11-25 03:48:14.752933164 +0100
++++ b/stylesheet.css	2026-11-25 03:48:14.754956924 +0100
+@@ -205,3 +205,8 @@
+   border-radius-value: 6px;
+   border-width-value: 1px;
+ }
++/* Local patch (2026-10-28): fluid drag shape, rounded and soft */
++.selection-tile-preview.fluid-shape {
++  border-radius: 18px;
++  box-shadow: 0px 0px 24px 2px rgba(0, 0, 0, 0.18);
++}
+diff -ruN a/utils/freeSpace.js b/utils/freeSpace.js
+--- a/utils/freeSpace.js	1970-01-01 01:00:00.000000000 +0100
++++ b/utils/freeSpace.js	2026-11-25 03:48:14.761121253 +0100
+@@ -0,0 +1,417 @@
++// Local patch (2026-10-27): fit a window into the space that is actually
++// free between tiled windows instead of the fixed layout tile.
++// Works on plain {x, y, width, height} objects so it can be tested outside
++// GNOME Shell (see ~/.config/tilingshell-backup/test-freeSpace.mjs).
++
++const MIN_KEEP = 0.33;
++
++function center(r) {
++  return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
++}
++
++function contains(r, p) {
++  return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height;
++}
++
++function overlapSize(a, b) {
++  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
++  const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
++  return w > 0 && h > 0 ? { w, h } : null;
++}
++
++// A tile is taken when a window covers its center or most of its area, so a
++// neighbour that grew a bit into it does not make it look occupied.
++function isTileVacant(tile, occupied) {
++  const c = center(tile);
++  return !occupied.some((o) => {
++    if (contains(o, c)) return true;
++    const ov = overlapSize(tile, o);
++    return ov !== null && ov.w * ov.h > (tile.width * tile.height) / 2;
++  });
++}
++
++// tile: the layout tile in pixels; occupied: frame rects of the other tiled
++// windows on this monitor; workArea: monitor work area; vacantTiles: the other
++// empty tiles, which the window must not grow into.
++function fitToFreeSpace(tile, occupied, _workArea, vacantTiles = []) {
++  // A window covering most of the tile is the one being replaced (or sits
++  // underneath): it is not an edge to snap against.
++  const covering = [];
++  occupied = occupied.filter((o) => {
++    const ov = overlapSize(tile, o);
++    const keep = ov === null || ov.w * ov.h <= (tile.width * tile.height) / 2;
++    if (!keep) covering.push(o);
++    return keep;
++  });
++  let left = tile.x, top = tile.y;
++  let right = tile.x + tile.width, bottom = tile.y + tile.height;
++
++  // Shrink away from windows that grew into the tile.
++  for (const o of occupied) {
++    const ov = overlapSize({ x: left, y: top, width: right - left, height: bottom - top }, o);
++    if (!ov) continue;
++    const oc = center(o);
++    const rc = { x: (left + right) / 2, y: (top + bottom) / 2 };
++    if (ov.h <= ov.w) {
++      if (oc.y < rc.y) top = Math.max(top, o.y + o.height);
++      else bottom = Math.min(bottom, o.y);
++    } else {
++      if (oc.x < rc.x) left = Math.max(left, o.x + o.width);
++      else right = Math.min(right, o.x);
++    }
++  }
++  if (right - left < tile.width * MIN_KEEP || bottom - top < tile.height * MIN_KEEP)
++    return { ...tile };
++
++  // Grow into gaps left by windows that shrank, up to the next window, but
++  // never across another empty tile and never past the tile to a bare edge.
++  const blocked = (strip) => strip.width > 0 && strip.height > 0 &&
++    (vacantTiles.some((v) => contains(strip, center(v))) || covering.some((o) => overlapSize(strip, o)));
++  const spansX = (o) => o.x < right && o.x + o.width > left;
++  const spansY = (o) => o.y < bottom && o.y + o.height > top;
++
++  let edge = null;
++  for (const o of occupied) if (spansX(o) && o.y + o.height <= top) edge = Math.max(edge ?? -Infinity, o.y + o.height);
++  if (edge !== null && !blocked({ x: left, y: edge, width: right - left, height: top - edge })) top = edge;
++
++  edge = null;
++  for (const o of occupied) if (spansX(o) && o.y >= bottom) edge = Math.min(edge ?? Infinity, o.y);
++  if (edge !== null && !blocked({ x: left, y: bottom, width: right - left, height: edge - bottom })) bottom = edge;
++
++  edge = null;
++  for (const o of occupied) if (spansY(o) && o.x + o.width <= left) edge = Math.max(edge ?? -Infinity, o.x + o.width);
++  if (edge !== null && !blocked({ x: edge, y: top, width: left - edge, height: bottom - top })) left = edge;
++
++  edge = null;
++  for (const o of occupied) if (spansY(o) && o.x >= right) edge = Math.min(edge ?? Infinity, o.x);
++  if (edge !== null && !blocked({ x: right, y: top, width: edge - right, height: bottom - top })) right = edge;
++
++  return { x: left, y: top, width: right - left, height: bottom - top };
++}
++
++// Indexes of the rects that share an edge with rect (within tol pixels).
++function touchingRects(rect, rects, tol = 10) {
++  const r = { l: rect.x, t: rect.y, r: rect.x + rect.width, b: rect.y + rect.height };
++  const result = [];
++  rects.forEach((o, i) => {
++    const l = o.x, t = o.y, rr = o.x + o.width, b = o.y + o.height;
++    const spanX = l < r.r && rr > r.l;
++    const spanY = t < r.b && b > r.t;
++    if ((spanX && (Math.abs(b - r.t) <= tol || Math.abs(t - r.b) <= tol)) ||
++        (spanY && (Math.abs(rr - r.l) <= tol || Math.abs(l - r.r) <= tol)))
++      result.push(i);
++  });
++  return result;
++}
++
++
++// --- Fill the screen ---------------------------------------------------------
++
++// Cut rect away from keep. Keeps the larger part; returns null when keep
++// covers rect completely.
++function cutAway(rect, keep) {
++  const ov = overlapSize(rect, keep);
++  if (!ov) return { ...rect };
++  let l = rect.x, t = rect.y, r = rect.x + rect.width, b = rect.y + rect.height;
++  const kl = keep.x, kt = keep.y, kr = keep.x + keep.width, kb = keep.y + keep.height;
++  const vertical = ov.h <= ov.w;
++  if (vertical) {
++    const above = kt - t, below = b - kb;
++    if (above <= 0 && below <= 0) return null;
++    if (above >= below) b = kt; else t = kb;
++  } else {
++    const leftPart = kl - l, rightPart = r - kr;
++    if (leftPart <= 0 && rightPart <= 0) return null;
++    if (leftPart >= rightPart) r = kl; else l = kr;
++  }
++  return { x: l, y: t, width: r - l, height: b - t };
++}
++
++// rects: tiled windows; priority: higher wins (most recently placed);
++// tiles: layout tiles in pixels. Returns new rects; null for a window that
++// was replaced (covered, or what is left of it holds no tile).
++function resolveOverlaps(rects, priority, tiles = []) {
++  const out = rects.map((r) => ({ ...r }));
++  const order = rects.map((_, i) => i).sort((a, b) => priority[b] - priority[a]);
++  for (let a = 0; a < order.length; a++) {
++    const keep = out[order[a]];
++    if (!keep) continue;
++    for (let z = a + 1; z < order.length; z++) {
++      const i = order[z];
++      if (out[i] && overlapSize(out[i], keep)) {
++        out[i] = cutAway(out[i], keep);
++        // a window left with only a sliver was replaced, not squeezed
++        if (out[i] && tiles.length > 0 && !tiles.some((t) => contains(out[i], center(t)))) out[i] = null;
++      }
++    }
++  }
++  return out;
++}
++
++// Grow every rect into empty space up to the next rect or the screen edge.
++// Two rects facing the same gap split it.
++function fillGaps(rects, workArea) {
++  const out = rects.map((r) => (r ? { ...r } : null));
++  const L = (r) => r.x, T = (r) => r.y, Rt = (r) => r.x + r.width, B = (r) => r.y + r.height;
++  const spanX = (a, b) => a.x < Rt(b) && Rt(a) > b.x;
++  const spanY = (a, b) => a.y < B(b) && B(a) > b.y;
++  // nearest obstacle from rect i in a direction: [edge, index or -1]
++  const nearest = (i, dir) => {
++    const r = out[i];
++    let edge = dir === 'down' ? B(workArea) : dir === 'up' ? T(workArea) : dir === 'right' ? Rt(workArea) : L(workArea);
++    let who = -1;
++    out.forEach((o, j) => {
++      if (!o || j === i) return;
++      if (dir === 'down' && spanX(o, r) && T(o) >= B(r) && T(o) < edge) { edge = T(o); who = j; }
++      if (dir === 'up' && spanX(o, r) && B(o) <= T(r) && B(o) > edge) { edge = B(o); who = j; }
++      if (dir === 'right' && spanY(o, r) && L(o) >= Rt(r) && L(o) < edge) { edge = L(o); who = j; }
++      if (dir === 'left' && spanY(o, r) && Rt(o) <= L(r) && Rt(o) > edge) { edge = Rt(o); who = j; }
++    });
++    return [edge, who];
++  };
++  const opposite = { down: 'up', up: 'down', left: 'right', right: 'left' };
++  for (let round = 0; round < 4; round++) {
++    let changed = false;
++    out.forEach((r, i) => {
++      if (!r) return;
++      for (const dir of ['down', 'up', 'right', 'left']) {
++        const [edge, who] = nearest(i, dir);
++        let target = edge;
++        const mine = dir === 'down' ? B(r) : dir === 'up' ? T(r) : dir === 'right' ? Rt(r) : L(r);
++        if (who >= 0 && edge !== mine) {
++          // split the gap when the other window also faces only us: move
++          // both edges to the middle at once
++          const [backEdge] = nearest(who, opposite[dir]);
++          if (backEdge === mine) {
++            target = Math.round((edge + mine) / 2);
++            const o = out[who];
++            if (dir === 'down') { o.height += o.y - target; o.y = target; }
++            if (dir === 'up') o.height = target - o.y;
++            if (dir === 'right') { o.width += o.x - target; o.x = target; }
++            if (dir === 'left') o.width = target - o.x;
++          }
++        }
++        if (dir === 'down' && target > B(r)) { r.height = target - r.y; changed = true; }
++        if (dir === 'up' && target < T(r)) { r.height += r.y - target; r.y = target; changed = true; }
++        if (dir === 'right' && target > Rt(r)) { r.width = target - r.x; changed = true; }
++        if (dir === 'left' && target < L(r)) { r.width += r.x - target; r.x = target; changed = true; }
++      }
++    });
++    if (!changed) break;
++  }
++  return out;
++}
++
++// Each window belongs to the tile it matches best (intersection over union);
++// tiles that belong to no window are free, even when a grown window covers them.
++function freeTiles(tiles, rects) {
++  const taken = new Set();
++  rects.forEach((r) => {
++    let best = -1, bestScore = 0;
++    tiles.forEach((t, i) => {
++      const ov = overlapSize(t, r);
++      if (!ov) return;
++      const inter = ov.w * ov.h;
++      const score = inter / (t.width * t.height + r.width * r.height - inter);
++      if (score > bestScore) { bestScore = score; best = i; }
++    });
++    if (best >= 0) taken.add(best);
++  });
++  return tiles.filter((_, i) => !taken.has(i));
++}
++
++// --- Hard frames (2026-10-28) ------------------------------------------------
++// The layout tiles are fixed frames. A window sits in the frames whose centre
++// it covers; windows never get cut or stretched into other shapes.
++
++function framesOf(tiles, rect) {
++  const out = [];
++  tiles.forEach((t, i) => {
++    if (contains(rect, center(t))) out.push(i);
++  });
++  return out;
++}
++
++function bounds(rects) {
++  const l = Math.min(...rects.map((r) => r.x)), t = Math.min(...rects.map((r) => r.y));
++  const r = Math.max(...rects.map((o) => o.x + o.width)), b = Math.max(...rects.map((o) => o.y + o.height));
++  return { x: l, y: t, width: r - l, height: b - t };
++}
++
++function nearestFree(tiles, taken, rect) {
++  const c = center(rect);
++  let best = -1, bestD = Infinity;
++  tiles.forEach((t, k) => {
++    if (taken.has(k)) return;
++    const tc = center(t);
++    const d = (tc.x - c.x) ** 2 + (tc.y - c.y) ** 2;
++    if (d < bestD) { bestD = d; best = k; }
++  });
++  return best;
++}
++
++// A window is placed on target. others: the other tiled windows' rects,
++// topmost first. Returns [{i, rect}] for the ones that have to move: a window
++// in the target's frames slides to the nearest empty frame. With no empty
++// frame left it keeps the frames it has outside the target (when they form a
++// rectangle), or else stays where it is, under the new window (a new layer).
++function placeInFrames(tiles, others, target) {
++  const want = new Set(framesOf(tiles, target));
++  const frames = others.map((r) => framesOf(tiles, r));
++  const hit = others.map((r, i) => {
++    if (frames[i].length > 0) return frames[i].some((f) => want.has(f));
++    // a window that sits in no frame: moves when it mostly overlaps the target
++    const ov = overlapSize(r, target);
++    return ov !== null && ov.w * ov.h > Math.min(r.width * r.height, target.width * target.height) / 2;
++  });
++  const taken = new Set(want);
++  frames.forEach((fs, i) => {
++    if (!hit[i]) fs.forEach((f) => taken.add(f));
++  });
++  const moves = [];
++  others.forEach((r, i) => {
++    if (!hit[i]) return;
++    const k = nearestFree(tiles, taken, r);
++    if (k >= 0) {
++      taken.add(k);
++      moves.push({ i, rect: { ...tiles[k] } });
++      return;
++    }
++    const rest = frames[i].filter((f) => !want.has(f) && !taken.has(f));
++    if (rest.length === 0) return;
++    const b = bounds(rest.map((f) => tiles[f]));
++    if (framesOf(tiles, b).every((f) => rest.includes(f))) {
++      rest.forEach((f) => taken.add(f));
++      moves.push({ i, rect: b });
++    }
++  });
++  return moves;
++}
++
++// After a window closes or minimizes: windows hidden under another one (all
++// their frames covered by windows above) slide into the empty frames. wins:
++// tiled windows' rects, topmost first. Nothing else moves or grows.
++function refillFrames(tiles, wins) {
++  const frames = wins.map((r) => framesOf(tiles, r));
++  const taken = new Set();
++  const hidden = [];
++  wins.forEach((_r, i) => {
++    if (frames[i].length > 0 && frames[i].every((f) => taken.has(f))) hidden.push(i);
++    frames[i].forEach((f) => taken.add(f));
++  });
++  const moves = [];
++  for (const i of hidden) {
++    const k = nearestFree(tiles, taken, wins[i]);
++    if (k < 0) break;
++    taken.add(k);
++    moves.push({ i, rect: { ...tiles[k] } });
++  }
++  return moves;
++}
++
++// Window menu "Fill free space": the window grows left/right, then up/down,
++// until it meets another window or the screen edge. Windows it already
++// overlaps (layers underneath) do not stop it. tol: touching edges count as
++// touching, not overlapping.
++function growIntoFreeSpace(rect, others, area, tol = 10) {
++  const L = area.x, T = area.y, R = area.x + area.width, B = area.y + area.height;
++  let l = Math.max(L, rect.x), t = Math.max(T, rect.y);
++  let r = Math.min(R, rect.x + rect.width), b = Math.min(B, rect.y + rect.height);
++  const blockers = others.filter((o) => {
++    const ov = overlapSize(o, rect);
++    return !ov || ov.w <= tol || ov.h <= tol;
++  });
++  const inRows = (o) => o.y < b - tol && o.y + o.height > t + tol;
++  const inCols = (o) => o.x < r - tol && o.x + o.width > l + tol;
++  const side = blockers.filter(inRows);
++  l = Math.max(L, ...side.filter((o) => o.x + o.width <= l + tol).map((o) => o.x + o.width));
++  r = Math.min(R, ...side.filter((o) => o.x >= r - tol).map((o) => o.x));
++  const ends = blockers.filter(inCols);
++  t = Math.max(T, ...ends.filter((o) => o.y + o.height <= t + tol).map((o) => o.y + o.height));
++  b = Math.min(B, ...ends.filter((o) => o.y >= b - tol).map((o) => o.y));
++  return { x: l, y: t, width: r - l, height: b - t };
++}
++
++// --- Fluid drag shape (2026-10-28) -------------------------------------------
++// While dragging, the preview takes the shape of the open space under the
++// pointer instead of the fixed tile. The layout stays the reference: when
++// the open space holds two or more tiles, the shape is the tile under the
++// pointer, stretched out to the edge of the open space on the sides where no
++// other tile of that space lies.
++
++// Largest empty rectangle around point p: grow sideways then up/down, and
++// up/down then sideways; keep the bigger one.
++function openSpaceAt(p, obstacles, area) {
++  const L = area.x, T = area.y, R = area.x + area.width, B = area.y + area.height;
++  const grow = (horizontalFirst) => {
++    let l = L, t = T, r = R, b = B;
++    const sideways = () => {
++      for (const o of obstacles) {
++        if (!(o.y < b && o.y + o.height > t)) continue;
++        if (o.x + o.width <= p.x) l = Math.max(l, o.x + o.width);
++        if (o.x > p.x) r = Math.min(r, o.x);
++      }
++    };
++    const upDown = () => {
++      for (const o of obstacles) {
++        if (!(o.x < r && o.x + o.width > l)) continue;
++        if (o.y + o.height <= p.y) t = Math.max(t, o.y + o.height);
++        if (o.y > p.y) b = Math.min(b, o.y);
++      }
++    };
++    // the first pass only looks at the pointer's row (or column)
++    if (horizontalFirst) { t = b = p.y; sideways(); t = T; b = B; upDown(); }
++    else { l = r = p.x; upDown(); l = L; r = R; sideways(); }
++    return { x: l, y: t, width: r - l, height: b - t };
++  };
++  const a = grow(true), c = grow(false);
++  return a.width * a.height >= c.width * c.height ? a : c;
++}
++
++function intersect(a, b) {
++  const l = Math.max(a.x, b.x), t = Math.max(a.y, b.y);
++  const r = Math.min(a.x + a.width, b.x + b.width), bt = Math.min(a.y + a.height, b.y + b.height);
++  return r > l && bt > t ? { x: l, y: t, width: r - l, height: bt - t } : null;
++}
++
++// tiles: layout tiles in pixels; obstacles: the other visible windows.
++// Returns null when the pointer is over a window or the open space is too
++// small to be useful: then the plain tile under the pointer is used.
++function fluidShape(tiles, obstacles, area, p, minSize = 0.33) {
++  if (obstacles.some((o) => contains(o, p))) return null;
++  const free = openSpaceAt(p, obstacles, area);
++  // free tiles that reach into the open space; a tile mostly covered by a
++  // window is not free
++  const inside = tiles.filter((t) => {
++    const i = intersect(t, free);
++    return i && i.width > 2 && i.height > 2 && isTileVacant(t, obstacles);
++  });
++  if (inside.length <= 1) {
++    const under = tiles.find((t) => contains(t, p));
++    if (inside.length === 0 && under &&
++        (free.width < under.width * minSize || free.height < under.height * minSize))
++      return null;
++    return free;
++  }
++  let home = inside.find((t) => contains(t, p));
++  if (!home) {
++    let best = Infinity;
++    for (const t of inside) {
++      const c = center(t), d = (c.x - p.x) ** 2 + (c.y - p.y) ** 2;
++      if (d < best) { best = d; home = t; }
++    }
++  }
++  const s = intersect(home, free);
++  let l = s.x, t = s.y, r = s.x + s.width, b = s.y + s.height;
++  const others = inside.filter((o) => o !== home);
++  const tol = 2;
++  const rows = (o) => o.y < b - tol && o.y + o.height > t + tol;
++  const cols = (o) => o.x < r - tol && o.x + o.width > l + tol;
++  if (!others.some((o) => rows(o) && o.x + o.width <= l + tol)) l = free.x;
++  if (!others.some((o) => rows(o) && o.x >= r - tol)) r = free.x + free.width;
++  if (!others.some((o) => cols(o) && o.y + o.height <= t + tol)) t = free.y;
++  if (!others.some((o) => cols(o) && o.y >= b - tol)) b = free.y + free.height;
++  return { x: l, y: t, width: r - l, height: b - t };
++}
++
++export { fluidShape, openSpaceAt, growIntoFreeSpace, fitToFreeSpace, isTileVacant, touchingRects, cutAway, resolveOverlaps, fillGaps, freeTiles, framesOf, placeInFrames, refillFrames };
