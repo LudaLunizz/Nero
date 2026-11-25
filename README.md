@@ -1,6 +1,6 @@
-# gnome-window-fit
+# Nero
 
-Window placement tweaks for GNOME Shell (Wayland, GNOME 46–50), made for a
+A window manager for GNOME: window placement tweaks for GNOME Shell (Wayland, GNOME 46–50), made for a
 multi-monitor desktop with portrait and small screens. Two parts:
 
 1. **keep-onscreen**: a small standalone extension. New windows are shrunk and
