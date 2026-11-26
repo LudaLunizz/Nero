@@ -2,7 +2,9 @@
 // WebAssembly build through the JS wrappers), plus the JSON boundary.
 use nero_core::free_space::*;
 use nero_core::line_groups::*;
-use nero_core::resize::{Side, is_adjacent, is_collinear};
+use nero_core::resize::{
+    MinSize, Side, clamp_edge, is_adjacent, is_collinear, linked_min, linked_rect,
+};
 use nero_core::{Point, Rect, abi, fit::fit_to_work_area};
 
 const fn r(x: f64, y: f64, w: f64, h: f64) -> Rect {
@@ -366,5 +368,130 @@ fn layout_through_the_json_boundary() {
     assert!(
         abi::call(br#"{"f":"matchWindow","a":[[],[],5,""]}"#)
             .starts_with(r#"{"err":"argument 2 (app)"#)
+    );
+}
+
+// The DP-1 case: two Brave bands side by side, the right one already at its
+// 500 px minimum. Ctrl-dragging the left one's right edge 100 px further must
+// not push the right one's far (right) edge into the next column.
+#[test]
+fn linked_resize_keeps_the_far_edge() {
+    let right = r(1497.0, 0.0, 500.0, 1440.0);
+    let grow = r(0.0, 0.0, 100.0, 0.0);
+    let (rs, ls) = (Some(Side::Right), Some(Side::Left));
+    // no minimum known: plain shrink, far edge in place
+    assert_eq!(
+        linked_rect(&right, &grow, ls, None, rs, None, MinSize::default()),
+        r(1597.0, 0.0, 400.0, 1440.0)
+    );
+    // Mutter kept 500 px at x 1597: far edge pushed to 2097 -> learn 500
+    let min = linked_min(
+        &right,
+        &r(1597.0, 0.0, 500.0, 1440.0),
+        ls,
+        None,
+        MinSize::default(),
+    );
+    assert_eq!(
+        min,
+        MinSize {
+            width: 500.0,
+            height: 0.0
+        }
+    );
+    // a normal shrink teaches nothing
+    assert_eq!(
+        linked_min(
+            &right,
+            &r(1597.0, 0.0, 400.0, 1440.0),
+            ls,
+            None,
+            MinSize::default()
+        ),
+        MinSize::default()
+    );
+    // with the minimum: stays at 1497..1997
+    assert_eq!(
+        linked_rect(&right, &grow, ls, None, rs, None, min),
+        r(1497.0, 0.0, 500.0, 1440.0)
+    );
+    // shrinking the dragged window still grows the neighbour, far edge fixed
+    let shrink = r(0.0, 0.0, -50.0, 0.0);
+    assert_eq!(
+        linked_rect(&right, &shrink, ls, None, rs, None, min),
+        r(1447.0, 0.0, 550.0, 1440.0)
+    );
+    // neighbour on the left of a left-edge drag: its x (far edge) stays
+    let left = r(0.0, 0.0, 563.0, 1440.0);
+    let pull = r(100.0, 0.0, -100.0, 0.0);
+    assert_eq!(
+        linked_rect(&left, &pull, rs, None, ls, None, MinSize::default()),
+        r(0.0, 0.0, 663.0, 1440.0)
+    );
+    // vertical: neighbour below, top edge moves, bottom stays
+    let below = r(0.0, 700.0, 800.0, 300.0);
+    let down = r(0.0, 0.0, 0.0, 200.0);
+    let m = MinSize {
+        width: 0.0,
+        height: 250.0,
+    };
+    assert_eq!(
+        linked_rect(
+            &below,
+            &down,
+            None,
+            Some(Side::Top),
+            None,
+            Some(Side::Bottom),
+            m
+        ),
+        r(0.0, 750.0, 800.0, 250.0)
+    );
+    // collinear window (same side as the drag): moves the same edge
+    let beside = r(0.0, 1500.0, 1497.0, 500.0);
+    assert_eq!(
+        linked_rect(&beside, &grow, rs, None, rs, None, MinSize::default()),
+        r(0.0, 1500.0, 1597.0, 500.0)
+    );
+}
+
+#[test]
+fn clamp_edge_stops_at_a_stuck_neighbour() {
+    let start = r(563.0, 0.0, 934.0, 1440.0);
+    let now = r(563.0, 0.0, 1034.0, 1440.0); // grew 100 px
+    let p_start = r(1497.0, 0.0, 500.0, 1440.0);
+    let stuck = (p_start, p_start); // could not shrink
+    assert_eq!(clamp_edge(&start, &now, Side::Right, &[stuck], 10.0), start);
+    // neighbour gave 60 of the 100 px
+    let part = (p_start, r(1557.0, 0.0, 440.0, 1440.0));
+    assert_eq!(
+        clamp_edge(&start, &now, Side::Right, &[part], 10.0),
+        r(563.0, 0.0, 994.0, 1440.0)
+    );
+    // neighbour followed fully: nothing changes
+    let full = (p_start, r(1597.0, 0.0, 400.0, 1440.0));
+    assert_eq!(clamp_edge(&start, &now, Side::Right, &[full], 10.0), now);
+    // a window that did not touch the edge at grab start is ignored
+    let far = (r(1600.0, 0.0, 300.0, 1440.0), r(1600.0, 0.0, 300.0, 1440.0));
+    assert_eq!(clamp_edge(&start, &now, Side::Right, &[far], 10.0), now);
+    // overlap that was there at grab start is kept, not cut away
+    let lap_start = r(1477.0, 0.0, 520.0, 1440.0);
+    assert_eq!(
+        clamp_edge(&start, &now, Side::Right, &[(lap_start, lap_start)], 10.0),
+        start
+    );
+    // left edge, dragged left into a stuck neighbour
+    let s2 = r(1497.0, 0.0, 500.0, 1440.0);
+    let n2 = r(1397.0, 0.0, 600.0, 1440.0);
+    let l = r(563.0, 0.0, 934.0, 1440.0);
+    assert_eq!(clamp_edge(&s2, &n2, Side::Left, &[(l, l)], 10.0), s2);
+}
+
+#[test]
+fn linked_resize_through_the_json_boundary() {
+    let out = abi::call(br#"{"f":"linkedRect","a":[{"x":1497,"y":0,"width":500,"height":1440},{"x":0,"y":0,"width":100,"height":0},"left",null,"right",null,{"width":500,"height":0}]}"#);
+    assert_eq!(
+        out,
+        r#"{"ok":{"x":1497.0,"y":0.0,"width":500.0,"height":1440.0}}"#
     );
 }

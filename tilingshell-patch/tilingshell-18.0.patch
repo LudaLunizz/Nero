@@ -224,22 +224,37 @@ diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tileP
        });
 diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/resizeManager.js
 --- a/components/tilingsystem/resizeManager.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilingsystem/resizeManager.js	2026-11-26 20:39:16.418122932 +0100
-@@ -1,8 +1,12 @@
++++ b/components/tilingsystem/resizeManager.js	2026-11-26 23:35:50.613292508 +0100
+@@ -1,12 +1,27 @@
 -import { St, Meta } from "../../gi/ext.js";
-+import { St, Meta, Clutter } from "../../gi/ext.js";
++import { St, Meta, Clutter, GLib } from "../../gi/ext.js";
  import SignalHandling from "../../utils/signalHandling.js";
  import Settings from "../../settings/settings.js";
  import { getWindows } from "../../utils/ui.js";
  
 +// Local patch: isAdjacent / isCollinear (Ctrl-linked resize) are Rust now, in
 +// Nero's core/src/resize.rs; see utils/freeSpace.js.
-+import { isAdjacent, isCollinear } from "../../utils/freeSpace.js";
++import { isAdjacent, isCollinear, linkedRect, linkedMin, clampEdge } from "../../utils/freeSpace.js";
++
++// Local patch 2026-11-26: during a Ctrl-resize only the touching edges move. A
++// linked window that cannot shrink further (Brave stops at 500 px) used to keep
++// its minimum size from the new edge on, which pushed its far edge into the
++// windows beyond it. Now its far edge stays put, and after the grab the dragged
++// window is pulled back to the edge the neighbour could reach.
++const SIDE_NAME = { [St.Side.TOP]: "top", [St.Side.BOTTOM]: "bottom", [St.Side.LEFT]: "left", [St.Side.RIGHT]: "right" };
++const OPPOSITE_NAME = { left: "right", right: "left", top: "bottom", bottom: "top" };
++const plain = (r) => ({ x: r.x, y: r.y, width: r.width, height: r.height });
++const differs = (a, b) => Math.abs(a.x - b.x) > 1 || Math.abs(a.y - b.y) > 1 || Math.abs(a.width - b.width) > 1 || Math.abs(a.height - b.height) > 1;
 +
  class ResizingManager {
    _signals;
    constructor() {
-@@ -18,6 +22,8 @@
+     this._signals = null;
++    this._grab = null;
+   }
+ 
+   enable() {
+@@ -18,6 +33,8 @@
        (_display, window, grabOp) => {
          const moving = grabOp === Meta.GrabOp.KEYBOARD_MOVING || grabOp === Meta.GrabOp.MOVING;
          if (moving || !Settings.RESIZE_COMPLEMENTING_WINDOWS) return;
@@ -248,17 +263,40 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
          this._onWindowResizingBegin(window, grabOp & ~1024);
        }
      );
-@@ -37,7 +43,8 @@
+@@ -33,12 +50,31 @@
    }
  
+   destroy() {
++    this._endGrab();
+     if (this._signals) this._signals.disconnect();
+   }
+ 
++  // Ends the bookkeeping of the last Ctrl-resize: settle timers and the
++  // handlers on the linked windows.
++  _endGrab() {
++    const g = this._grab;
++    if (!g) return;
++    this._grab = null;
++    g.timers.forEach((id) => GLib.source_remove(id));
++    g.handlers.forEach(([obj, id]) => {
++      try {
++        obj.disconnect(id);
++      } catch (_e) {
++        // window already gone
++      }
++    });
++  }
++
    _onWindowResizingBegin(window, grabOp) {
 -    if (!window || !window.assignedTile || !this._signals)
 +    // Ctrl links every touching window on this monitor, tiled or not.
 +    if (!window || !this._signals)
        return;
++    this._endGrab();
      const verticalSide = [false, 0];
      const horizontalSide = [false, 0];
-@@ -83,7 +90,7 @@
+     switch (grabOp) {
+@@ -83,7 +119,7 @@
      }
      if (!verticalSide[0] && !horizontalSide[0]) return;
      const otherTiledWindows = getWindows().filter(
@@ -267,7 +305,63 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
      );
      if (otherTiledWindows.length === 0) return;
      const verticalAdjacentWindows = verticalSide[0] ? this._findAdjacent(
-@@ -180,26 +187,19 @@
+@@ -122,19 +158,43 @@
+         ]);
+       }
+     });
+-    const windowsToResize = Array.from(windowsMap.values());
+-    this._signals.connect(
++    const windowsToResize = Array.from(windowsMap.values()).map(([win, start, v, h]) => ({
++      win,
++      start: plain(start),
++      v: v === -1 ? null : SIDE_NAME[v],
++      h: h === -1 ? null : SIDE_NAME[h],
++      min: { width: 0, height: 0 },
++      want: null
++    }));
++    const startingRect = plain(window.get_frame_rect());
++    const g = {
+       window,
+-      "size-changed",
+-      this._onResizingWindow.bind(
+-        this,
+-        window,
+-        window.get_frame_rect().copy(),
+-        verticalSide[1],
+-        horizontalSide[1],
+-        windowsToResize
+-      )
+-    );
++      start: startingRect,
++      dragV: verticalSide[0] ? SIDE_NAME[verticalSide[1]] : null,
++      dragH: horizontalSide[0] ? SIDE_NAME[horizontalSide[1]] : null,
++      reachV: verticalSide[0] ? this._reach(verticalSide[1]) : 0,
++      reachH: horizontalSide[0] ? this._reach(horizontalSide[1]) : 0,
++      entries: windowsToResize,
++      delta: { x: 0, y: 0, width: 0, height: 0 },
++      timers: [],
++      handlers: []
++    };
++    this._grab = g;
++    windowsToResize.forEach((e) => {
++      const onChange = () => this._onLinkedChanged(g, e);
++      g.handlers.push([e.win, e.win.connect("size-changed", onChange)]);
++      g.handlers.push([e.win, e.win.connect("position-changed", onChange)]);
++      g.handlers.push([e.win, e.win.connect("unmanaged", () => (e.gone = true))]);
++    });
++    g.handlers.push([window, window.connect("unmanaged", () => (g.gone = true))]);
++    this._signals.connect(window, "size-changed", () => this._onResizingWindow(g));
++  }
++
++  _reach(side) {
++    const gaps = Settings.get_inner_gaps();
++    const gap = (v) => (v === 0 ? 2 : v);
++    const own = { [St.Side.TOP]: gaps.top, [St.Side.BOTTOM]: gaps.bottom, [St.Side.LEFT]: gaps.left, [St.Side.RIGHT]: gaps.right }[side];
++    return gap(own) + gap(gaps.right) * 4;
+   }
+ 
+   _oppositeSide(side) {
+@@ -180,26 +240,19 @@
      }
      const oppositeSide = this._oppositeSide(side);
      const newRemainingWindows = /* @__PURE__ */ new Set();
@@ -303,20 +397,132 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
        } else {
          newRemainingWindows.add(otherWin);
        }
-@@ -213,6 +213,13 @@
-         result.push(recursionResult);
+@@ -214,52 +267,87 @@
          newRemainingWindows.delete(recursionResult[0]);
        });
-+    });
+     });
 +    // follow the line on: windows beside the collinear ones, and their opposite neighbours
 +    collinearWindows.forEach((otherWin) => {
 +      this._findAdjacent(otherWin, side, newRemainingWindows).forEach((recursionResult) => {
 +        result.push(recursionResult);
 +        newRemainingWindows.delete(recursionResult[0]);
 +      });
-     });
++    });
      return result;
    }
+ 
+   _onWindowResizingEnd(window) {
+     if (this._signals) this._signals.disconnect(window);
++    const g = this._grab;
++    if (!g || g.window !== window) return;
++    // Wayland clients answer a resize a little later: settle twice, then stop
++    // watching the linked windows.
++    g.timers.push(GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
++      g.timers.shift();
++      this._settle(g);
++      return GLib.SOURCE_REMOVE;
++    }));
++    g.timers.push(GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
++      g.timers.shift();
++      this._settle(g);
++      if (this._grab === g) this._endGrab();
++      return GLib.SOURCE_REMOVE;
++    }));
+   }
+ 
+-  _onResizingWindow(window, startingRect, resizeVerticalSide, resizeHorizontalSide, windowsToResize) {
+-    const currentRect = window.get_frame_rect();
+-    const resizedRect = {
+-      x: currentRect.x - startingRect.x,
+-      y: currentRect.y - startingRect.y,
+-      width: currentRect.width - startingRect.width,
+-      height: currentRect.height - startingRect.height
++  _onResizingWindow(g) {
++    const currentRect = g.window.get_frame_rect();
++    g.delta = {
++      x: currentRect.x - g.start.x,
++      y: currentRect.y - g.start.y,
++      width: currentRect.width - g.start.width,
++      height: currentRect.height - g.start.height
+     };
+-    windowsToResize.forEach(
+-      ([otherWindow, otherWindowRect, verticalSide, horizontalSide]) => {
+-        const isSameVerticalSide = verticalSide !== -1 && verticalSide === resizeVerticalSide;
+-        const isSameHorizontalSide = horizontalSide !== -1 && horizontalSide === resizeHorizontalSide;
+-        const rect = [
+-          otherWindowRect.x,
+-          otherWindowRect.y,
+-          otherWindowRect.width,
+-          otherWindowRect.height
+-        ];
+-        if (horizontalSide === St.Side.LEFT) {
+-          rect[2] = otherWindowRect.width - (isSameHorizontalSide ? resizedRect.x : resizedRect.width);
+-          rect[0] = otherWindowRect.x + (isSameHorizontalSide ? resizedRect.x : resizedRect.width);
+-        } else if (horizontalSide === St.Side.RIGHT) {
+-          rect[2] = otherWindowRect.width + (isSameHorizontalSide ? resizedRect.width : resizedRect.x);
+-        }
+-        if (verticalSide === St.Side.TOP) {
+-          rect[3] = otherWindowRect.height - (isSameVerticalSide ? resizedRect.y : resizedRect.height);
+-          rect[1] = otherWindowRect.y + (isSameVerticalSide ? resizedRect.y : resizedRect.height);
+-        } else if (verticalSide === St.Side.BOTTOM) {
+-          rect[3] = otherWindowRect.height + (isSameVerticalSide ? resizedRect.height : resizedRect.y);
+-        }
+-        otherWindow.move_resize_frame(
+-          false,
+-          Math.max(0, rect[0]),
+-          Math.max(0, rect[1]),
+-          Math.max(0, rect[2]),
+-          Math.max(0, rect[3])
+-        );
+-      }
+-    );
++    g.entries.forEach((e) => this._placeLinked(g, e));
++  }
++
++  _placeLinked(g, e) {
++    if (e.gone) return;
++    const r = linkedRect(e.start, g.delta, e.h, e.v, g.dragH, g.dragV, e.min);
++    e.want = r;
++    e.win.move_resize_frame(false, Math.max(0, r.x), Math.max(0, r.y), Math.max(0, r.width), Math.max(0, r.height));
++  }
++
++  // A linked window came out other than asked: if it stopped at its minimum
++  // size its far edge moved, so remember the minimum and put it back.
++  _onLinkedChanged(g, e) {
++    if (e.gone || !e.want) return;
++    const actual = plain(e.win.get_frame_rect());
++    const min = linkedMin(e.start, actual, e.h, e.v, e.min);
++    if (min.width === e.min.width && min.height === e.min.height) return;
++    e.min = min;
++    const r = linkedRect(e.start, g.delta, e.h, e.v, g.dragH, g.dragV, e.min);
++    if (differs(r, actual)) this._placeLinked(g, e);
++  }
++
++  // After the grab: the dragged window (and windows whose edge moved along
++  // with it) may not reach further than the windows on the other side of the
++  // line could give way.
++  _settle(g) {
++    if (g.gone) return;
++    const movers = [{ win: g.window, start: g.start, h: g.dragH, v: g.dragV }];
++    g.entries.forEach((e) => {
++      if (e.gone) return;
++      const h = e.h && e.h === g.dragH ? e.h : null;
++      const v = e.v && e.v === g.dragV ? e.v : null;
++      if (h || v) movers.push({ win: e.win, start: e.start, h, v });
++    });
++    movers.forEach((m) => {
++      const actual = plain(m.win.get_frame_rect());
++      let r = actual;
++      [[m.h, g.reachH], [m.v, g.reachV]].forEach(([side, reach]) => {
++        if (!side) return;
++        const partners = g.entries.filter((e) => !e.gone && e.win !== m.win && (e.h === OPPOSITE_NAME[side] || e.v === OPPOSITE_NAME[side])).map((e) => [e.start, plain(e.win.get_frame_rect())]);
++        if (partners.length > 0) r = clampEdge(m.start, r, side, partners, reach);
++      });
++      if (differs(r, actual)) m.win.move_resize_frame(false, r.x, r.y, r.width, r.height);
++    });
+   }
+ }
+ 
 diff -ruN a/components/tilingsystem/tilingLayout.js b/components/tilingsystem/tilingLayout.js
 --- a/components/tilingsystem/tilingLayout.js	2026-10-17 12:39:11.000000000 +0200
 +++ b/components/tilingsystem/tilingLayout.js	2026-11-26 20:39:16.418203732 +0100
@@ -1084,8 +1290,8 @@ diff -ruN a/stylesheet.css b/stylesheet.css
 +}
 diff -ruN a/utils/freeSpace.js b/utils/freeSpace.js
 --- a/utils/freeSpace.js	1970-01-01 01:00:00.000000000 +0100
-+++ b/utils/freeSpace.js	2026-11-26 20:39:16.423775030 +0100
-@@ -0,0 +1,29 @@
++++ b/utils/freeSpace.js	1970-01-01 01:00:00.000000000 +0100
+@@ -0,0 +1,36 @@
 +// Local patch: window placement logic (free space, hard frames, fill free
 +// space, fluid drag shape, Ctrl-linked resize). The logic itself is Rust, in
 +// Nero's core/ (core/src/free_space.rs, resize.rs), run as WebAssembly through
@@ -1113,5 +1319,12 @@ diff -ruN a/utils/freeSpace.js b/utils/freeSpace.js
 +  call("fluidShape", Rs(tiles), Rs(obstacles), R(area), P(p), minSize);
 +const isAdjacent = (w, o, side, reach) => call("isAdjacent", R(w), R(o), side, reach);
 +const isCollinear = (w, o, side, reach) => call("isCollinear", R(w), R(o), side, reach);
++// Ctrl-linked resize: only the touching edge moves, the far edge stays put (see
++// core/src/resize.rs). Sides are "left"/"right"/"top"/"bottom" or null.
++const linkedRect = (start, delta, h, v, dragH, dragV, min) =>
++  call("linkedRect", R(start), R(delta), h, v, dragH, dragV, min);
++const linkedMin = (start, actual, h, v, min) => call("linkedMin", R(start), R(actual), h, v, min);
++const clampEdge = (start, now, side, partners, reach) =>
++  call("clampEdge", R(start), R(now), side, partners.map(([a, b]) => [R(a), R(b)]), reach);
 +
-+export { fluidShape, openSpaceAt, growIntoFreeSpace, fitToFreeSpace, isTileVacant, touchingRects, cutAway, resolveOverlaps, fillGaps, freeTiles, framesOf, placeInFrames, refillFrames, isAdjacent, isCollinear };
++export { fluidShape, openSpaceAt, growIntoFreeSpace, fitToFreeSpace, isTileVacant, touchingRects, cutAway, resolveOverlaps, fillGaps, freeTiles, framesOf, placeInFrames, refillFrames, isAdjacent, isCollinear, linkedRect, linkedMin, clampEdge };
