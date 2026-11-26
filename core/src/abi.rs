@@ -9,7 +9,8 @@
 //! bytes at the returned pointer. The answer stays valid until the next call.
 
 use crate::{
-    Point, Rect, fit, free_space as fs, layout, line_groups as lg, resize, workspaces as ws,
+    Point, Rect, fit, free_space as fs, layout, line_groups as lg, resize, touchpad as tp,
+    workspaces as ws,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -185,6 +186,12 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
             opt(a, 2, "threshold", 1.0)?,
             opt(a, 3, "cooldownMs", 250.0)?,
         )),
+        "swipePoints" => ok(tp::swipe_points(arg(a, 0, "count")?)),
+        "swipeTarget" => ok(tp::swipe_target(
+            arg(a, 0, "endProgress")?,
+            arg(a, 1, "count")?,
+        )),
+        "scrollPlugin" => ok(tp::scroll_plugin(arg(a, 0, "percent")?)),
         "restackOrder" => ok(layout::restack_order(
             &arg::<Vec<layout::Placed>>(a, 0, "placed")?,
             arg(a, 1, "newIndex")?,

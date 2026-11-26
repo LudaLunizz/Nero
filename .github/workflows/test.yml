@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: sudo apt-get update && sudo apt-get install -y gjs libglib2.0-bin
+      - run: sudo apt-get update && sudo apt-get install -y gjs libglib2.0-bin lua5.4
       - run: rustup update stable && rustup default stable && rustup target add wasm32-unknown-unknown && rustup component add clippy rustfmt
       - name: Rust core (fmt, clippy, tests)
         working-directory: core
@@ -22,4 +22,7 @@ jobs:
       - run: node --check nero-layout/nero-layout@LudaLunizz/extension.js
       - run: glib-compile-schemas --strict --dry-run nero-layout/nero-layout@LudaLunizz/schemas
       - run: node --check nero-workspaces/nero-workspaces@LudaLunizz/extension.js
+      - run: node --check nero-workspaces/nero-workspaces@LudaLunizz/prefs.js
+      - run: node --check nero-workspaces/nero-workspaces@LudaLunizz/scrollSpeed.js
+      - run: lua5.4 tests/test-scroll-plugin.lua
       - run: glib-compile-schemas --strict --dry-run nero-workspaces/nero-workspaces@LudaLunizz/schemas

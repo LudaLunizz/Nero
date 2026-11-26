@@ -7,20 +7,28 @@
 // sight. Switching a monitor moves only that monitor's windows.
 //
 // Switching: the scroll wheel (or touchpad) on a Dash to Panel panel switches the
-// monitor of that panel; the workspace keys (Super+Page Up/Down, Ctrl+Alt+arrows,
+// monitor of that panel; a three-finger swipe switches the monitor under the
+// pointer (GNOME's own swipe, which moves all monitors, is switched off); the
+// workspace keys (Super+Page Up/Down, Ctrl+Alt+arrows,
 // Super+1..) switch the monitor of the focused window. Activating a parked window
 // (taskbar, Alt+Tab, a notification) shows its workspace on its own monitor.
 //
 // The bookkeeping (which window goes where, scroll -> steps) is Rust (Nero's
-// core/src/workspaces.rs), run as WebAssembly through nero.js.
+// core/src/workspaces.rs, core/src/touchpad.rs), run as WebAssembly through nero.js.
+//
+// Also here: the two-finger scroll speed of the touchpad, which GNOME has no
+// setting for. It is a libinput plugin (core/src/scroll_speed.lua) written to
+// ~/.config/libinput/plugins, which Mutter loads at login.
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as SwipeTracker from 'resource:///org/gnome/shell/ui/swipeTracker.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {call} from './nero.js';
+import {writeScrollPlugin} from './scrollSpeed.js';
 
 const STATE_VERSION = 1;
 const DTP_UUID = 'dash-to-panel@jderose9.github.com';
@@ -80,6 +88,8 @@ export default class NeroWorkspaces extends Extension {
         this._takeOverMutter();
         this._patchAnimation();
         this._bindKeys();
+        this._setupSwipe();
+        this._writeScrollPlugin();
 
         const display = global.display;
         const wm = global.workspace_manager;
@@ -88,6 +98,8 @@ export default class NeroWorkspaces extends Extension {
             [display, display.connect('window-entered-monitor', (_d, _m, w) => this._onMonitor(w))],
             [wm, wm.connect('active-workspace-changed', () => this._onActiveChanged())],
             [this._settings, this._settings.connect('changed::workspaces-per-monitor', () => this._onCountChanged())],
+            [this._settings, this._settings.connect('changed::three-finger-swipe', () => this._setupSwipe())],
+            [this._settings, this._settings.connect('changed::touchpad-scroll-speed', () => this._writeScrollPlugin())],
             [global.backend.get_monitor_manager(), global.backend.get_monitor_manager().connect('monitors-changed', () => this._later(() => this._reconcileAll()))],
             [Main.extensionManager, Main.extensionManager.connect('extension-state-changed', (_m, ext) => {
                 if (ext.uuid === DTP_UUID)
@@ -119,6 +131,7 @@ export default class NeroWorkspaces extends Extension {
         this._signals = null;
         this._unhookPanels();
         this._unbindKeys();
+        this._teardownSwipe();
         this._unpatchAnimation();
         // Put every window back on the visible workspace, so nothing is lost
         // when Nero is switched off, then give GNOME its own settings back.
@@ -432,6 +445,82 @@ export default class NeroWorkspaces extends Extension {
         if (anim && this._origAnimateSwitch)
             delete anim.animateSwitch;
         this._origAnimateSwitch = null;
+    }
+
+    // ---- touchpad --------------------------------------------------------------
+
+    // GNOME's three-finger swipe slides every monitor: it is switched off (and
+    // kept off: GNOME turns it on again when the overview closes) and our own
+    // tracker switches only the monitor the swipe starts on.
+    _setupSwipe() {
+        this._teardownSwipe();
+        if (!this._settings.get_boolean('three-finger-swipe'))
+            return;
+        const gnome = Main.wm._workspaceAnimation?._swipeTracker;
+        if (!gnome)
+            return;
+        this._gnomeTracker = gnome;
+        gnome.enabled = false;
+        this._gnomeTrackerId = gnome.connect('notify::enabled', () => {
+            if (gnome.enabled)
+                gnome.enabled = false;
+        });
+        const tracker = new SwipeTracker.SwipeTracker(global.stage,
+            Clutter.Orientation.HORIZONTAL, Shell.ActionMode.NORMAL, {
+                allowDrag: false,
+                allowScroll: false,
+                phase: Clutter.EventPhase.CAPTURE,
+                name: 'Nero workspace swipe',
+            });
+        tracker.connect('begin', (t, monitor) => this._swipeBegin(t, monitor));
+        tracker.connect('end', (_t, _duration, endProgress) => this._swipeEnd(endProgress));
+        this._tracker = tracker;
+    }
+
+    _teardownSwipe() {
+        if (this._tracker) {
+            this._tracker.destroy();
+            this._tracker = null;
+        }
+        if (this._gnomeTracker) {
+            this._gnomeTracker.disconnect(this._gnomeTrackerId);
+            this._gnomeTracker.enabled = !Main.overview.visible;
+            this._gnomeTracker = null;
+            this._gnomeTrackerId = 0;
+        }
+    }
+
+    _swipeBegin(tracker, monitor) {
+        if (monitor < 0)
+            monitor = global.display.get_current_monitor();
+        const wm = global.workspace_manager;
+        tracker.orientation = wm.layout_rows !== -1 ? Clutter.Orientation.HORIZONTAL : Clutter.Orientation.VERTICAL;
+        const cur = this._currentOf(monitor);
+        this._swipeMonitor = monitor;
+        // The page size: a swipe as wide as the monitor moves one workspace.
+        const geo = global.display.get_monitor_geometry(monitor);
+        const distance = tracker.orientation === Clutter.Orientation.HORIZONTAL ? geo.width : geo.height;
+        tracker.confirmSwipe(distance, call('swipePoints', this._count), cur, cur);
+    }
+
+    _swipeEnd(endProgress) {
+        const monitor = this._swipeMonitor;
+        this._swipeMonitor = undefined;
+        if (monitor === undefined)
+            return;
+        const target = call('swipeTarget', endProgress, this._count);
+        if (target !== this._currentOf(monitor))
+            this.switchMonitor(monitor, target);
+    }
+
+    // The scroll speed lives in a libinput plugin file (none at 100 %); Mutter
+    // reads it at login.
+    _writeScrollPlugin() {
+        try {
+            writeScrollPlugin(this._settings.get_int('touchpad-scroll-speed'));
+        } catch (e) {
+            log(`could not write the scroll speed plugin: ${e}`);
+        }
     }
 
     // ---- keys ----------------------------------------------------------------
