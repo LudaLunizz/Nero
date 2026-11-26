@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub mod abi;
 pub mod fit;
 pub mod free_space;
+pub mod layout;
 pub mod line_groups;
 pub mod resize;
 

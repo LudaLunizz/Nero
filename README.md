@@ -1,12 +1,14 @@
 # Nero
 
 A window manager for GNOME: window placement tweaks for GNOME Shell (Wayland, GNOME 46–50), made for a
-multi-monitor desktop with portrait and small screens. Two parts:
+multi-monitor desktop with portrait and small screens. Three parts:
 
 1. **keep-onscreen**: a small standalone extension. New windows are shrunk and
    moved so they fit the monitor they open on (no more windows half off the edge).
 2. **Tiling Shell patch**: a patch set for [Tiling Shell](https://github.com/domferr/tilingshell)
    **18.0** by Domenico Ferraro, which changes how tiling, dragging and resizing behave.
+3. **nero-layout**: a standalone extension that remembers where every app window is and
+   puts the windows back after the next login (after a shutdown, a crash or a log out).
 
 The placement logic itself is **Rust** (`core/`), built to WebAssembly and run inside
 GNOME Shell by a small JS loader (`core/js/nero.js`). GNOME Shell only lets JavaScript
@@ -94,6 +96,45 @@ plus `utils/nero.js` and `utils/nero_core.wasm` from `core/build.sh`. Some older
 
 You can try it in a nested shell: `dbus-run-session -- gnome-shell --nested --wayland`
 (GNOME 49+: `--devkit`). Use a separate dconf profile / `XDG_CONFIG_HOME` so your real settings are not touched.
+
+## 3. nero-layout
+
+```sh
+./core/build.sh
+cp -r nero-layout/nero-layout@LudaLunizz ~/.local/share/gnome-shell/extensions/
+glib-compile-schemas ~/.local/share/gnome-shell/extensions/nero-layout@LudaLunizz/schemas
+# log out and back in (Wayland), then:
+gnome-extensions enable nero-layout@LudaLunizz
+```
+
+**Saving.** Every minute (when something changed) it writes `~/.local/state/nero/layout.json`:
+per window the app (desktop file id), the title, the monitor (connector name, for example `DP-1`),
+position and size as a share of that monitor's work area (so a panel or resolution change does not
+matter), the workspace, and whether it is maximized, full screen, minimized or always on top. A
+layout with *fewer* windows is only written when it is still the same a minute later, so the apps
+closing during a log out or shutdown do not overwrite the saved layout. Dialogs, helper windows and
+apps without a desktop file are not saved.
+
+**Restoring.** At the next login, each new window of a saved app takes the saved window of that app
+with the closest title and goes to its monitor, spot, workspace and state. After 15 seconds, saved apps
+that still have no window and are not running are started once (apps in your autostart are left to
+the session, so nothing runs twice). For two minutes new windows are matched; saving waits until then.
+The layout of the session before is kept as `layout.prev.json`. A monitor that is not connected
+any more: its windows stay where they open. What is *inside* a window (tabs, open files) is up to the
+app; browsers and most editors reopen that themselves.
+
+Settings (`gsettings --schemadir ~/.local/share/gnome-shell/extensions/nero-layout@LudaLunizz/schemas
+set org.gnome.shell.extensions.nero-layout KEY VALUE`):
+
+| Key | Default | |
+|---|---|---|
+| `skip-apps` | `[]` | Desktop file ids to leave alone, e.g. `"['org.gnome.Ptyxis.desktop']"` when another tool places them |
+| `launch-apps` | `true` | Start saved apps that are missing after a login |
+| `launch-delay` | `15` | Seconds before starting them |
+| `restore-seconds` | `120` | How long after a login new windows are matched |
+| `save-interval` | `60` | Seconds between saves |
+| `save-now` | `false` | Set to `true`: save at once |
+| `restore-now` | `false` | Set to `true`: put the open windows back on their saved spots and start missing apps, without logging out |
 
 ## License
 

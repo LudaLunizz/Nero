@@ -3,3 +3,6 @@ core/target/
 keep-onscreen/keep-onscreen@LudaLunizz/nero.js
 keep-onscreen/keep-onscreen@LudaLunizz/nero_core.wasm
 keep-onscreen/keep-onscreen@LudaLunizz/schemas/gschemas.compiled
+nero-layout/nero-layout@LudaLunizz/nero.js
+nero-layout/nero-layout@LudaLunizz/nero_core.wasm
+nero-layout/nero-layout@LudaLunizz/schemas/gschemas.compiled

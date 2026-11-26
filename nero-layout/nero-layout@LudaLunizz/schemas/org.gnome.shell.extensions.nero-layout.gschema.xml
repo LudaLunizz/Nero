@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.nero-layout" path="/org/gnome/shell/extensions/nero-layout/">
+    <key name="skip-apps" type="as">
+      <default>[]</default>
+      <summary>Apps to leave alone</summary>
+      <description>Desktop file ids (for example org.gnome.Ptyxis.desktop) that are neither saved nor restored, for apps that another tool places.</description>
+    </key>
+    <key name="launch-apps" type="b">
+      <default>true</default>
+      <summary>Start missing apps</summary>
+      <description>After a login, start each saved app that has no window yet and is not running, once.</description>
+    </key>
+    <key name="launch-delay" type="u">
+      <range min="0" max="600"/>
+      <default>15</default>
+      <summary>Seconds before starting missing apps</summary>
+      <description>Gives autostart apps time to open their own windows first, so nothing is started twice.</description>
+    </key>
+    <key name="restore-seconds" type="u">
+      <range min="10" max="1800"/>
+      <default>120</default>
+      <summary>How long new windows are matched</summary>
+      <description>Seconds after a login (or a restore-now) during which new windows are put on their saved spots. Saving waits until this is over.</description>
+    </key>
+    <key name="save-interval" type="u">
+      <range min="10" max="3600"/>
+      <default>60</default>
+      <summary>Seconds between saves</summary>
+      <description>The layout is written only when it changed. A layout with fewer windows is written only when it is the same on two saves in a row, so windows closing at logout do not overwrite the saved layout.</description>
+    </key>
+    <key name="save-now" type="b">
+      <default>false</default>
+      <summary>Save now</summary>
+      <description>Set to true to save the layout at once (also during a restore); it goes back to false.</description>
+    </key>
+    <key name="restore-now" type="b">
+      <default>false</default>
+      <summary>Restore now</summary>
+      <description>Set to true to put the open windows back on their saved spots and start missing apps, as after a login; it goes back to false.</description>
+    </key>
+  </schema>
+</schemalist>
