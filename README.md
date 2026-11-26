@@ -65,6 +65,17 @@ out of GNOME with a systemd drop-in, `~/.config/systemd/user/hyprpolkitagent.ser
 ExecCondition=/bin/sh -c 'case ":$XDG_CURRENT_DESKTOP:" in *:GNOME:*) exit 1;; esac'
 ```
 
+**No dark overlay behind password prompts (optional).** GNOME Shell darkens every monitor
+while one of these prompts is open. To keep the other monitors as they are:
+
+```sh
+gsettings --schemadir ~/.local/share/gnome-shell/extensions/keep-onscreen@LudaLunizz/schemas \
+  set org.gnome.shell.extensions.keep-onscreen password-prompt-dim false
+```
+
+The prompt still takes the keyboard until you answer or cancel it, so other apps cannot
+read what you type.
+
 ## 2. Tiling Shell 18.0 patch
 
 ```sh
