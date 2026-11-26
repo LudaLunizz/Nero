@@ -27,7 +27,7 @@ These are what CI runs (`.github/workflows/`):
 (cd core && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --locked)
 ./tilingshell-patch/apply.sh
 ./tests/run.sh
-node --check keep-onscreen/keep-onscreen@LudaLunizz/extension.js
+node --check keep-onscreen/nero-keep-onscreen@LudaLunizz/extension.js
 ```
 
 ## Conventions
