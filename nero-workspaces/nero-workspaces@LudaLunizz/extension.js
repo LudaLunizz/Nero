@@ -81,9 +81,28 @@ export default class NeroWorkspaces extends Extension {
         this._winSignals = new Map(); // Meta.Window -> [ids]
         this._scroll = new Map(); // panel actor -> scroll state
         this._panelSignals = [];
+        this._signals = [];
         this._moving = 0;
         this._laters = new Set();
         this._saveId = 0;
+        // GNOME Shell does not call disable() when enable() throws: undo what was
+        // done so far ourselves, or GNOME's workspace settings, keys and swipe
+        // would stay taken over by an extension that is not running.
+        try {
+            this._enable();
+        } catch (e) {
+            try {
+                this.disable();
+            } catch (e2) {
+                logError(e2, '[nero-workspaces] undo after a failed enable');
+            }
+            throw e;
+        }
+    }
+
+    _enable() {
+        // Fails here, before anything is changed, when nero_core.wasm is missing or broken.
+        call('wsStep', 0, 0, 1, false);
         this._loadState();
         this._takeOverMutter();
         this._patchAnimation();
@@ -93,7 +112,7 @@ export default class NeroWorkspaces extends Extension {
 
         const display = global.display;
         const wm = global.workspace_manager;
-        this._signals = [
+        this._signals.push(
             [display, display.connect('window-created', (_d, w) => this._later(() => this._track(w, true)))],
             [display, display.connect('window-entered-monitor', (_d, _m, w) => this._onMonitor(w))],
             [wm, wm.connect('active-workspace-changed', () => this._onActiveChanged())],
@@ -105,7 +124,7 @@ export default class NeroWorkspaces extends Extension {
                 if (ext.uuid === DTP_UUID)
                     this._hookPanels();
             })],
-        ];
+        );
         for (const actor of global.get_window_actors())
             this._track(actor.meta_window, false);
         this._reconcileAll();
@@ -126,7 +145,7 @@ export default class NeroWorkspaces extends Extension {
             this._saveId = 0;
             this._saveState();
         }
-        for (const [obj, id] of this._signals)
+        for (const [obj, id] of this._signals ?? [])
             obj.disconnect(id);
         this._signals = null;
         this._unhookPanels();
@@ -178,17 +197,27 @@ export default class NeroWorkspaces extends Extension {
     }
 
     _giveBackMutter() {
-        let saved;
+        const text = this._settings.get_string('saved-gnome-settings');
+        if (text === '')
+            return; // nothing taken over
+        let saved = null;
         try {
-            saved = JSON.parse(this._settings.get_string('saved-gnome-settings'));
+            saved = JSON.parse(text);
         } catch {
-            return;
+            log('saved GNOME workspace settings are damaged: putting back GNOME\'s defaults');
         }
         const mutter = new Gio.Settings({schema_id: 'org.gnome.mutter'});
         const wmPrefs = new Gio.Settings({schema_id: 'org.gnome.desktop.wm.preferences'});
-        wmPrefs.set_int('num-workspaces', saved.num);
-        mutter.set_boolean('workspaces-only-on-primary', saved.onlyOnPrimary);
-        mutter.set_boolean('dynamic-workspaces', saved.dynamic);
+        // A damaged or partial value must not leave GNOME on Nero's fixed
+        // workspaces: each missing or wrong field gets GNOME's default back.
+        const bool = (v, key, s) => (typeof v === 'boolean' ? s.set_boolean(key, v) : s.reset(key));
+        const num = saved?.num;
+        if (Number.isInteger(num) && num >= 1 && num <= 36)
+            wmPrefs.set_int('num-workspaces', num);
+        else
+            wmPrefs.reset('num-workspaces');
+        bool(saved?.onlyOnPrimary, 'workspaces-only-on-primary', mutter);
+        bool(saved?.dynamic, 'dynamic-workspaces', mutter);
         this._settings.set_string('saved-gnome-settings', '');
     }
 
@@ -214,8 +243,12 @@ export default class NeroWorkspaces extends Extension {
         try {
             const [, bytes] = stateFile().load_contents(null);
             const data = JSON.parse(new TextDecoder().decode(bytes));
-            for (const [c, v] of Object.entries(data.current ?? {})) {
-                if (Number.isInteger(v))
+            // A hand-edited or damaged file must not leave a monitor on a
+            // workspace that does not exist (all its windows would be parked).
+            if (data?.version !== STATE_VERSION || typeof data.current !== 'object' || data.current === null)
+                return;
+            for (const [c, v] of Object.entries(data.current)) {
+                if (Number.isInteger(v) && v >= 0 && v < 12)
                     this._current.set(c, v);
             }
         } catch {
@@ -236,21 +269,19 @@ export default class NeroWorkspaces extends Extension {
     _saveState() {
         try {
             const file = stateFile();
-            file.get_parent().make_directory_with_parents(null);
-        } catch {
-            // exists
-        }
-        try {
+            // same rights as nero-layout, which keeps window titles in this folder
+            GLib.mkdir_with_parents(file.get_parent().get_path(), 0o700);
             const data = {version: STATE_VERSION, current: Object.fromEntries(this._current)};
-            stateFile().replace_contents(new TextEncoder().encode(`${JSON.stringify(data, null, 1)}\n`),
-                null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+            file.replace_contents(new TextEncoder().encode(`${JSON.stringify(data, null, 1)}\n`),
+                null, false, Gio.FileCreateFlags.PRIVATE | Gio.FileCreateFlags.REPLACE_DESTINATION, null);
         } catch (e) {
             log(`could not save state: ${e}`);
         }
     }
 
     _currentOf(monitor) {
-        return Math.min(this._current.get(connectorOf(monitor)) ?? 0, this._count - 1);
+        const cur = this._current.get(connectorOf(monitor));
+        return Number.isInteger(cur) ? Math.max(0, Math.min(cur, this._count - 1)) : 0;
     }
 
     // ---- windows -----------------------------------------------------------
@@ -277,13 +308,16 @@ export default class NeroWorkspaces extends Extension {
         // GNOME can take them off all workspaces later, without a new window.
         if (this._vw.has(w) || !this._trackable(w))
             return;
+        // the core call first: if it throws, nothing is connected (a later
+        // _track would otherwise connect the signals a second time)
+        const real = w.get_workspace()?.index() ?? VISIBLE;
+        const vw = call('wsAdopt', real, this._currentOf(w.get_monitor()), this._count);
         const ids = [
             w.connect('workspace-changed', () => this._onWorkspaceChanged(w)),
             w.connect('unmanaged', () => this._untrack(w)),
         ];
         this._winSignals.set(w, ids);
-        const real = w.get_workspace()?.index() ?? VISIBLE;
-        this._vw.set(w, call('wsAdopt', real, this._currentOf(w.get_monitor()), this._count));
+        this._vw.set(w, vw);
         if (fresh)
             this._place(w);
     }

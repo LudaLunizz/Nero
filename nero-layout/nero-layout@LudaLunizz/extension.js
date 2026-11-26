@@ -121,6 +121,30 @@ function autostartNames() {
     return names;
 }
 
+// One saved window from layout.json with only well-formed fields, or null when it
+// has no app. The file can be edited by hand or damaged: one wrong field (a title
+// that is not text, a spot that is not four numbers) must not make the core
+// reject the whole list, which would leave every window unrestored.
+function cleanEntry(e) {
+    if (!e || typeof e !== 'object' || typeof e.app !== 'string' || e.app === '')
+        return null;
+    const num = v => typeof v === 'number' && Number.isFinite(v);
+    const s = e.spot;
+    return {
+        app: e.app,
+        title: typeof e.title === 'string' ? e.title : '',
+        connector: typeof e.connector === 'string' ? e.connector : null,
+        spot: s && typeof s === 'object' && num(s.fx) && num(s.fy) && num(s.fw) && num(s.fh)
+            ? {fx: s.fx, fy: s.fy, fw: s.fw, fh: s.fh} : null,
+        workspace: Number.isInteger(e.workspace) && e.workspace >= 0 ? e.workspace : -1,
+        sticky: e.sticky === true,
+        maximized: e.maximized === true,
+        fullscreen: e.fullscreen === true,
+        minimized: e.minimized === true,
+        above: e.above === true,
+    };
+}
+
 export default class NeroLayout extends Extension {
     enable() {
         this._settings = this.getSettings();
@@ -320,10 +344,17 @@ export default class NeroLayout extends Extension {
     _startRestore(data, manual) {
         this._endRestore();
         const skip = this._settings.get_strv('skip-apps');
-        const saved = (data?.windows ?? []).filter(e => e && typeof e.app === 'string' && !skip.includes(e.app));
+        const saved = (data?.windows ?? []).map(cleanEntry).filter(e => e && !skip.includes(e.app));
         if (!saved.length)
             return;
         this._restoring = true;
+        // Timers of an earlier restore (a restore-now while one runs) must not end
+        // or launch apps for this one: they only act while their run is current.
+        const run = this._run = (this._run ?? 0) + 1;
+        const thisRun = fn => () => {
+            if (this._run === run)
+                fn();
+        };
         this._saved = saved;
         this._used = saved.map(() => false);
         this._placed = [];
@@ -347,8 +378,8 @@ export default class NeroLayout extends Extension {
             this._frameIds.set(actor, id);
         });
         if (this._settings.get_boolean('launch-apps'))
-            this._later(this._settings.get_uint('launch-delay') * 1000, () => this._launchMissing());
-        this._later(this._settings.get_uint('restore-seconds') * 1000, () => this._endRestore());
+            this._later(this._settings.get_uint('launch-delay') * 1000, thisRun(() => this._launchMissing()));
+        this._later(this._settings.get_uint('restore-seconds') * 1000, thisRun(() => this._endRestore()));
     }
 
     _endRestore() {
@@ -392,7 +423,11 @@ export default class NeroLayout extends Extension {
         this._place(w, entry);
         this._restack(i);
         // slow clients (XWayland, Electron) may still resize or raise themselves: once more
+        // (index i belongs to this run's saved list: a newer restore has its own)
+        const run = this._run;
         this._later(1200, () => {
+            if (this._run !== run)
+                return;
             this._place(w, entry);
             this._restack(i);
         });
