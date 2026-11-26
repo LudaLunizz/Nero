@@ -19,7 +19,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {ExtensionState} from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 import {call, plainRect} from './nero.js';
-import {makeLog, connectorOf, monitorForConnector} from './helpers.js';
+import {makeLog, connectorOf, monitorForConnector, Registry} from './helpers.js';
 
 const FILE_VERSION = 1;
 // nero-workspaces sets up the fixed workspaces the saved workspace numbers refer to.
@@ -137,29 +137,27 @@ function cleanEntry(e) {
 export default class NeroLayout extends Extension {
     enable() {
         this._settings = this.getSettings();
-        this._timers = new Set();
-        this._frameIds = new Map(); // actor -> first-frame handler id
-        this._wait = null;
+        this._reg = new Registry(); // everything below that lives as long as the extension
+        this._restoreReg = null; // the window-created hook of a running restore
+        this._wait = null; // a Registry while waiting for nero-workspaces
         this._restoring = false;
         this._pendingShrink = null;
         const saved = this._load();
         this._lastWritten = saved ? JSON.stringify(saved.windows) : null;
 
-        this._settingsIds = [
-            this._settings.connect('changed::save-now', () => {
-                if (!this._settings.get_boolean('save-now'))
-                    return;
-                this._settings.set_boolean('save-now', false);
-                this._save(true);
-            }),
-            this._settings.connect('changed::restore-now', () => {
-                if (!this._settings.get_boolean('restore-now'))
-                    return;
-                this._settings.set_boolean('restore-now', false);
-                this._startRestore(this._load(), true);
-            }),
-            this._settings.connect('changed::save-interval', () => this._startSaveTimer()),
-        ];
+        this._reg.connect(this._settings, 'changed::save-now', () => {
+            if (!this._settings.get_boolean('save-now'))
+                return;
+            this._settings.set_boolean('save-now', false);
+            this._save(true);
+        });
+        this._reg.connect(this._settings, 'changed::restore-now', () => {
+            if (!this._settings.get_boolean('restore-now'))
+                return;
+            this._settings.set_boolean('restore-now', false);
+            this._startRestore(this._load(), true);
+        });
+        this._reg.connect(this._settings, 'changed::save-interval', () => this._startSaveTimer());
         this._startSaveTimer();
 
         const atLogin = !globalThis[DONE_FLAG] && (Main.layoutManager._startingUp || shellUptime() < 120);
@@ -178,25 +176,14 @@ export default class NeroLayout extends Extension {
     disable() {
         this._stopWaiting();
         this._endRestore();
-        this._timers.forEach(id => GLib.Source.remove(id));
-        this._timers = null;
-        if (this._saveTimer)
-            GLib.Source.remove(this._saveTimer);
+        this._reg.destroy();
+        this._reg = null;
         this._saveTimer = 0;
-        this._settingsIds.forEach(id => this._settings.disconnect(id));
-        this._settingsIds = null;
         this._settings = null;
     }
 
     _later(ms, fn) {
-        if (!this._timers)
-            return; // disabled
-        const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
-            this._timers?.delete(id);
-            fn();
-            return GLib.SOURCE_REMOVE;
-        });
-        this._timers.add(id);
+        this._reg?.timeout(ms, fn); // nothing once disabled
     }
 
     // At login the saved workspace numbers only fit once nero-workspaces has fixed the
@@ -220,37 +207,27 @@ export default class NeroLayout extends Extension {
             log(why);
             this._later(WORKSPACES_SETTLE_MS, fn);
         };
-        this._wait = {
-            id: em.connect('extension-state-changed', (_m, ext) => {
-                if (ext.uuid === WORKSPACES_UUID && !pending())
-                    go('nero-workspaces is ready: restoring');
-            }),
-            timer: GLib.timeout_add(GLib.PRIORITY_DEFAULT, WORKSPACES_WAIT_MS, () => {
-                this._wait.timer = 0;
-                go('nero-workspaces did not come up in time: restoring anyway');
-                return GLib.SOURCE_REMOVE;
-            }),
-        };
+        const wait = this._wait = new Registry();
+        wait.connect(em, 'extension-state-changed', (_m, ext) => {
+            if (ext.uuid === WORKSPACES_UUID && !pending())
+                go('nero-workspaces is ready: restoring');
+        });
+        wait.timeout(WORKSPACES_WAIT_MS, () => go('nero-workspaces did not come up in time: restoring anyway'));
     }
 
     _stopWaiting() {
-        if (!this._wait)
-            return;
-        Main.extensionManager.disconnect(this._wait.id);
-        if (this._wait.timer)
-            GLib.Source.remove(this._wait.timer);
+        this._wait?.destroy();
         this._wait = null;
     }
 
     // ---- saving ----
 
     _startSaveTimer() {
-        if (this._saveTimer)
-            GLib.Source.remove(this._saveTimer);
-        this._saveTimer = GLib.timeout_add_seconds(GLib.PRIORITY_LOW, this._settings.get_uint('save-interval'), () => {
+        this._reg.remove(this._saveTimer);
+        this._saveTimer = this._reg.timeoutSeconds(this._settings.get_uint('save-interval'), () => {
             this._save(false);
             return GLib.SOURCE_CONTINUE;
-        });
+        }, GLib.PRIORITY_LOW);
     }
 
     _snapshot() {
@@ -354,17 +331,16 @@ export default class NeroLayout extends Extension {
                 delete w._neroLayoutClaimed;
             this._claim(w);
         }
-        this._createdId = global.display.connect('window-created', (_d, w) => {
+        const hooks = this._restoreReg = new Registry();
+        hooks.connect(global.display, 'window-created', (_d, w) => {
             const actor = w.get_compositor_private();
             if (!actor)
                 return;
-            const id = actor.connect('first-frame', () => {
-                this._frameIds.delete(actor);
-                actor.disconnect(id);
+            const id = hooks.connect(actor, 'first-frame', () => {
+                hooks.disconnect(actor, id);
                 // after keep-onscreen's fit, and once the title has settled
                 this._later(400, () => this._claim(w));
             });
-            this._frameIds.set(actor, id);
         });
         if (this._settings.get_boolean('launch-apps'))
             this._later(this._settings.get_uint('launch-delay') * 1000, thisRun(() => this._launchMissing()));
@@ -372,18 +348,9 @@ export default class NeroLayout extends Extension {
     }
 
     _endRestore() {
-        if (this._createdId)
-            global.display.disconnect(this._createdId);
-        this._createdId = 0;
-        // windows that have not drawn their first frame yet: nothing to wait for any more
-        for (const [actor, id] of this._frameIds) {
-            try {
-                actor.disconnect(id);
-            } catch {
-                // actor already gone
-            }
-        }
-        this._frameIds.clear();
+        // also the windows that have not drawn their first frame yet: nothing to wait for any more
+        this._restoreReg?.destroy();
+        this._restoreReg = null;
         this._restoring = false;
         this._saved = null;
         this._used = null;
