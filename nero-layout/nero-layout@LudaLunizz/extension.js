@@ -3,8 +3,9 @@
 //
 // Saved per window: app (desktop file id), title, monitor (connector name), position
 // and size as a share of that monitor's work area, workspace, maximized, full screen,
-// minimized, always on top. After a login, each new window of a saved app takes the
-// saved window of that app with the closest title and is put on its spot; apps that
+// minimized, always on top; the list is in stacking order. After a login, each new
+// window of a saved app takes the saved window of that app with the closest title and
+// is put on its spot and back in its saved stacking order; apps that
 // have no window and are not running are started once. What is inside a window (tabs,
 // files) is the app's own business: many apps reopen it themselves.
 //
@@ -270,6 +271,7 @@ export default class NeroLayout extends Extension {
         this._restoring = true;
         this._saved = saved;
         this._used = saved.map(() => false);
+        this._placed = [];
         log(`restoring ${saved.length} windows (saved ${data.saved})`);
 
         for (const w of global.display.sort_windows_by_stacking(global.display.list_all_windows())) {
@@ -299,6 +301,7 @@ export default class NeroLayout extends Extension {
         this._restoring = false;
         this._saved = null;
         this._used = null;
+        this._placed = null;
     }
 
     _claim(w) {
@@ -318,10 +321,33 @@ export default class NeroLayout extends Extension {
             return;
         this._used[i] = true;
         w._neroLayoutClaimed = true;
+        this._placed.push({w, index: i});
         const entry = this._saved[i];
         this._place(w, entry);
-        // slow clients (XWayland, Electron) may still resize themselves: once more
-        this._later(1200, () => this._place(w, entry));
+        this._restack(i);
+        // slow clients (XWayland, Electron) may still resize or raise themselves: once more
+        this._later(1200, () => {
+            this._place(w, entry);
+            this._restack(i);
+        });
+    }
+
+    // The saved file is in stacking order (bottom first), but windows open in
+    // whatever order their apps start and each new one lands on top. Raise the
+    // new window and the saved windows above it on its monitor, bottom first.
+    _restack(index) {
+        if (!this._placed)
+            return;
+        const live = this._placed.filter(p => p.w.get_compositor_private() && !p.w.minimized);
+        let order;
+        try {
+            order = call('restackOrder', live.map(p => ({index: p.index, monitor: p.w.get_monitor()})), index);
+        } catch (e) {
+            log(`restack failed: ${e.message}`);
+            return;
+        }
+        for (const i of order)
+            live.find(p => p.index === i)?.w.raise();
     }
 
     _place(w, e) {

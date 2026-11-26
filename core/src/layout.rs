@@ -93,9 +93,60 @@ pub fn match_window(saved: &[Saved], used: &[bool], app: &str, title: &str) -> O
     best.map(|(i, _)| i)
 }
 
+/// A window that took a saved window during a restore: its place in the saved
+/// list (the list is in stacking order, bottom first) and the monitor it is on.
+#[derive(Clone, Copy, Debug, Deserialize)]
+pub struct Placed {
+    pub index: usize,
+    pub monitor: i32,
+}
+
+/// Windows open in whatever order the apps start, and each new one lands on
+/// top. After window `new_index` is placed, raise these (saved indices, in
+/// this order): the new window and every placed window on its monitor that
+/// was saved above it, bottom first. That puts back the saved stacking
+/// among them without touching other monitors or windows that were not saved.
+pub fn restack_order(placed: &[Placed], new_index: usize) -> Vec<usize> {
+    let Some(monitor) = placed
+        .iter()
+        .find(|p| p.index == new_index)
+        .map(|p| p.monitor)
+    else {
+        return Vec::new();
+    };
+    let mut order: Vec<usize> = placed
+        .iter()
+        .filter(|p| p.monitor == monitor && p.index >= new_index)
+        .map(|p| p.index)
+        .collect();
+    order.sort_unstable();
+    order.dedup();
+    order
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pl(index: usize, monitor: i32) -> Placed {
+        Placed { index, monitor }
+    }
+
+    #[test]
+    fn restacking() {
+        // saved bottom first: 4, 5 (verticals) below 6, 7 (horizontals) on monitor 0,
+        // 2 on monitor 1. Window 6 opened late, above 7: raise 6, then 7 over it.
+        let placed = [pl(7, 0), pl(4, 0), pl(2, 1), pl(5, 0), pl(6, 0)];
+        assert_eq!(restack_order(&placed, 6), vec![6, 7]);
+        // the lowest one opened last: everything above it on its monitor goes back up
+        assert_eq!(restack_order(&placed, 4), vec![4, 5, 6, 7]);
+        // the top one: only itself
+        assert_eq!(restack_order(&placed, 7), vec![7]);
+        // alone on its monitor
+        assert_eq!(restack_order(&placed, 2), vec![2]);
+        // not placed: nothing
+        assert_eq!(restack_order(&placed, 9), Vec::<usize>::new());
+    }
 
     const WA: Rect = Rect::new(1080.0, 1120.0, 2560.0, 1392.0);
 

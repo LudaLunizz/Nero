@@ -185,6 +185,10 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
             opt(a, 2, "threshold", 1.0)?,
             opt(a, 3, "cooldownMs", 250.0)?,
         )),
+        "restackOrder" => ok(layout::restack_order(
+            &arg::<Vec<layout::Placed>>(a, 0, "placed")?,
+            arg(a, 1, "newIndex")?,
+        )),
         _ => Err(format!("unknown function {f:?}")),
     }
 }

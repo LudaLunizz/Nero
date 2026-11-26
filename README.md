@@ -118,7 +118,9 @@ closing during a log out or shutdown do not overwrite the saved layout. Dialogs,
 apps without a desktop file are not saved.
 
 **Restoring.** At the next login, each new window of a saved app takes the saved window of that app
-with the closest title and goes to its monitor, spot, workspace and state. After 15 seconds, saved apps
+with the closest title and goes to its monitor, spot, workspace and state. Windows open in whatever
+order their apps start, so after each one is placed the saved windows on that monitor are raised back
+into their saved stacking order (the file lists them bottom first). After 15 seconds, saved apps
 that still have no window and are not running are started once (apps in your autostart are left to
 the session, so nothing runs twice). For two minutes new windows are matched; saving waits until then.
 The layout of the session before is kept as `layout.prev.json`. A monitor that is not connected
