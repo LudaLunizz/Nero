@@ -1,6 +1,6 @@
 [package]
 name = "nero-core"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 license = "MIT"
 description = "Window placement logic of Nero (free space, frames, fluid drag shape, line groups), built to WebAssembly for GNOME Shell"
