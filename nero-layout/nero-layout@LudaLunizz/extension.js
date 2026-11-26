@@ -17,9 +17,16 @@ import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {ExtensionState} from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 import {call, plainRect} from './nero.js';
 
 const FILE_VERSION = 1;
+// nero-workspaces sets up the fixed workspaces the saved workspace numbers refer to.
+const WORKSPACES_UUID = 'nero-workspaces@LudaLunizz';
+// How long a login restore waits for nero-workspaces at most, and how long after it
+// is active (GNOME applies its workspace settings a moment later).
+const WORKSPACES_WAIT_MS = 10000;
+const WORKSPACES_SETTLE_MS = 500;
 // Set once per GNOME Shell process: a re-enable (after the lock screen, or by hand)
 // is not a login and must not restore or start apps again.
 const DONE_FLAG = '__neroLayoutLoginDone';
@@ -118,6 +125,8 @@ export default class NeroLayout extends Extension {
     enable() {
         this._settings = this.getSettings();
         this._timers = new Set();
+        this._frameIds = new Map(); // actor -> first-frame handler id
+        this._wait = null;
         this._restoring = false;
         this._pendingShrink = null;
         const saved = this._load();
@@ -149,11 +158,12 @@ export default class NeroLayout extends Extension {
             } catch (e) {
                 log(`no copy of the last layout: ${e.message}`);
             }
-            this._startRestore(saved, false);
+            this._whenWorkspacesReady(() => this._startRestore(saved, false));
         }
     }
 
     disable() {
+        this._stopWaiting();
         this._endRestore();
         this._timers.forEach(id => GLib.Source.remove(id));
         this._timers = null;
@@ -166,12 +176,57 @@ export default class NeroLayout extends Extension {
     }
 
     _later(ms, fn) {
+        if (!this._timers)
+            return; // disabled
         const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
             this._timers?.delete(id);
             fn();
             return GLib.SOURCE_REMOVE;
         });
         this._timers.add(id);
+    }
+
+    // At login the saved workspace numbers only fit once nero-workspaces has fixed the
+    // number of workspaces; restoring before that would pile windows on the last one.
+    // Waits for it when it is enabled (at most 10 s), else runs fn at once.
+    _whenWorkspacesReady(fn) {
+        const em = Main.extensionManager;
+        const pending = () => {
+            if (global.settings.get_boolean('disable-user-extensions') ||
+                !global.settings.get_strv('enabled-extensions').includes(WORKSPACES_UUID))
+                return false;
+            const state = em.lookup(WORKSPACES_UUID)?.state;
+            return state === undefined || state === ExtensionState.INITIALIZED || state === ExtensionState.ACTIVATING;
+        };
+        if (!pending()) {
+            fn();
+            return;
+        }
+        const go = why => {
+            this._stopWaiting();
+            log(why);
+            this._later(WORKSPACES_SETTLE_MS, fn);
+        };
+        this._wait = {
+            id: em.connect('extension-state-changed', (_m, ext) => {
+                if (ext.uuid === WORKSPACES_UUID && !pending())
+                    go('nero-workspaces is ready: restoring');
+            }),
+            timer: GLib.timeout_add(GLib.PRIORITY_DEFAULT, WORKSPACES_WAIT_MS, () => {
+                this._wait.timer = 0;
+                go('nero-workspaces did not come up in time: restoring anyway');
+                return GLib.SOURCE_REMOVE;
+            }),
+        };
+    }
+
+    _stopWaiting() {
+        if (!this._wait)
+            return;
+        Main.extensionManager.disconnect(this._wait.id);
+        if (this._wait.timer)
+            GLib.Source.remove(this._wait.timer);
+        this._wait = null;
     }
 
     // ---- saving ----
@@ -284,10 +339,12 @@ export default class NeroLayout extends Extension {
             if (!actor)
                 return;
             const id = actor.connect('first-frame', () => {
+                this._frameIds.delete(actor);
                 actor.disconnect(id);
                 // after keep-onscreen's fit, and once the title has settled
                 this._later(400, () => this._claim(w));
             });
+            this._frameIds.set(actor, id);
         });
         if (this._settings.get_boolean('launch-apps'))
             this._later(this._settings.get_uint('launch-delay') * 1000, () => this._launchMissing());
@@ -298,6 +355,15 @@ export default class NeroLayout extends Extension {
         if (this._createdId)
             global.display.disconnect(this._createdId);
         this._createdId = 0;
+        // windows that have not drawn their first frame yet: nothing to wait for any more
+        for (const [actor, id] of this._frameIds) {
+            try {
+                actor.disconnect(id);
+            } catch {
+                // actor already gone
+            }
+        }
+        this._frameIds.clear();
         this._restoring = false;
         this._saved = null;
         this._used = null;
