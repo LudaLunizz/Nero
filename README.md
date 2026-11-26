@@ -52,7 +52,14 @@ The copy step above also needs the settings schema compiled once:
 
 **Password prompts on one monitor (optional).** GNOME Shell opens its password prompts
 (polkit, keyring unlock, Wi-Fi/VPN secrets, encrypted disk unlock) on the monitor under the
-pointer. To always get them on one monitor, give its connector name (for example `HDMI-2`;
+pointer. To always get them on one monitor, open the extension's settings (Extensions app →
+Keep On Screen → Settings, or `gnome-extensions prefs nero-keep-onscreen@LudaLunizz`) and pick it
+under **Password prompts → Open on**. The list shows every connected monitor with its name, size
+and place (leftmost, 2nd from the left, ...). **Show a prompt** opens a real administrator prompt
+(`pkexec true`), so you can see where the next one will open. Cancel it, or type your password:
+it only runs `true`. The same page has the dark-overlay switch below.
+
+Without the settings window, give the connector name directly (for example `HDMI-2`;
 `ls /sys/class/drm` lists them as `card0-HDMI-A-2`, GNOME names that `HDMI-2`):
 
 ```sh

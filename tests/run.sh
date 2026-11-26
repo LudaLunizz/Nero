@@ -7,5 +7,6 @@ cd "$(dirname "$0")"
 for t in test-freeSpace test-frames test-fillfree test-fluid test-linegroups test-adjacent test-linked-resize; do echo "== $t"; gjs -m "$t.mjs"; done
 echo "== test-loader-version"; gjs -m test-loader-version.mjs
 echo "== test-registry"; gjs -m test-registry.mjs
+echo "== test-prompt-choices"; gjs -m test-prompt-choices.mjs
 echo "== test-build-check"; ./test-build-check.sh
 echo "all tests passed"
