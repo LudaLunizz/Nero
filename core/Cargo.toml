@@ -2,7 +2,7 @@
 name = "nero-core"
 version = "0.1.0"
 edition = "2024"
-license = "GPL-3.0-or-later"
+license = "MIT"
 description = "Window placement logic of Nero (free space, frames, fluid drag shape, line groups), built to WebAssembly for GNOME Shell"
 publish = false
 

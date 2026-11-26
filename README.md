@@ -205,4 +205,10 @@ set org.gnome.shell.extensions.nero-workspaces KEY VALUE`):
 
 ## License
 
-GPL-3.0, same as Tiling Shell. The patch is a derivative of Tiling Shell © Domenico Ferraro.
+Nero is MIT licensed (see `LICENSE`): the Rust core (`core/`), `nero-keep-onscreen`,
+`nero-layout`, `nero-workspaces` and the tests.
+
+The one exception is `tilingshell-patch/`. That patch is a derivative of
+[Tiling Shell](https://github.com/domferr/tilingshell) © Domenico Ferraro and stays
+under the GPL-3.0, like Tiling Shell itself (see `tilingshell-patch/LICENSE`). A
+Tiling Shell built with `apply.sh` is therefore GPL-3.0 as a whole.
