@@ -4,7 +4,7 @@
 
 Please report it **privately**, not in a public issue.
 
-This repository is private, so the GitHub report form is not available: contact the maintainer, [LudaLunizz](https://github.com/LudaLunizz), directly.
+Go to the **Security** tab of this repository, choose **Report a vulnerability**, and fill in the form ([direct link](https://github.com/LudaLunizz/Nero/security/advisories/new)). Only you and the maintainer can see the report.
 
 Please include:
 

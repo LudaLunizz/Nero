@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Report a security problem
-    url: https://github.com/LudaLunizz/Nero/blob/main/SECURITY.md
-    about: Report vulnerabilities privately, not in a public issue (see SECURITY.md).
+    url: https://github.com/LudaLunizz/Nero/security/advisories/new
+    about: Report vulnerabilities privately through GitHub, not in a public issue.
