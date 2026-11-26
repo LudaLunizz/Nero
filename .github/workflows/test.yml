@@ -16,7 +16,9 @@ jobs:
         working-directory: core
         run: cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --locked
       - run: ./tilingshell-patch/apply.sh
+      - run: ./core/build.sh --check
       - run: ./tests/run.sh
+      - run: node --check core/js/helpers.js
       - run: node --check keep-onscreen/nero-keep-onscreen@LudaLunizz/extension.js
       - run: glib-compile-schemas --strict --dry-run keep-onscreen/nero-keep-onscreen@LudaLunizz/schemas
       - run: node --check nero-layout/nero-layout@LudaLunizz/extension.js
