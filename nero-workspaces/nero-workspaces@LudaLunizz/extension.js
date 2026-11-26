@@ -28,7 +28,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as SwipeTracker from 'resource:///org/gnome/shell/ui/swipeTracker.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {call} from './nero.js';
-import {makeLog, connectorOf as connectorName} from './helpers.js';
+import {makeLog, connectorOf as connectorName, Registry} from './helpers.js';
 import {writeScrollPlugin} from './scrollSpeed.js';
 
 const STATE_VERSION = 1;
@@ -75,12 +75,11 @@ export default class NeroWorkspaces extends Extension {
         this._settings = this.getSettings();
         this._current = new Map(); // connector -> virtual workspace shown
         this._vw = new Map(); // Meta.Window -> virtual workspace
-        this._winSignals = new Map(); // Meta.Window -> [ids]
+        this._winReg = new Registry({tag: 'nero-workspaces'}); // the signals of every tracked window
         this._scroll = new Map(); // panel actor -> scroll state
         this._panelSignals = [];
-        this._signals = [];
+        this._reg = new Registry({tag: 'nero-workspaces', later: {add: laterAdd, remove: laterRemove}});
         this._moving = 0;
-        this._laters = new Set();
         this._saveId = 0;
         // GNOME Shell does not call disable() when enable() throws: undo what was
         // done so far ourselves, or GNOME's workspace settings, keys and swipe
@@ -109,19 +108,18 @@ export default class NeroWorkspaces extends Extension {
 
         const display = global.display;
         const wm = global.workspace_manager;
-        this._signals.push(
-            [display, display.connect('window-created', (_d, w) => this._later(() => this._track(w, true)))],
-            [display, display.connect('window-entered-monitor', (_d, _m, w) => this._onMonitor(w))],
-            [wm, wm.connect('active-workspace-changed', () => this._onActiveChanged())],
-            [this._settings, this._settings.connect('changed::workspaces-per-monitor', () => this._onCountChanged())],
-            [this._settings, this._settings.connect('changed::three-finger-swipe', () => this._setupSwipe())],
-            [this._settings, this._settings.connect('changed::touchpad-scroll-speed', () => this._writeScrollPlugin())],
-            [global.backend.get_monitor_manager(), global.backend.get_monitor_manager().connect('monitors-changed', () => this._later(() => this._reconcileAll()))],
-            [Main.extensionManager, Main.extensionManager.connect('extension-state-changed', (_m, ext) => {
-                if (ext.uuid === DTP_UUID)
-                    this._hookPanels();
-            })],
-        );
+        const reg = this._reg;
+        reg.connect(display, 'window-created', (_d, w) => this._later(() => this._track(w, true)));
+        reg.connect(display, 'window-entered-monitor', (_d, _m, w) => this._onMonitor(w));
+        reg.connect(wm, 'active-workspace-changed', () => this._onActiveChanged());
+        reg.connect(this._settings, 'changed::workspaces-per-monitor', () => this._onCountChanged());
+        reg.connect(this._settings, 'changed::three-finger-swipe', () => this._setupSwipe());
+        reg.connect(this._settings, 'changed::touchpad-scroll-speed', () => this._writeScrollPlugin());
+        reg.connect(global.backend.get_monitor_manager(), 'monitors-changed', () => this._later(() => this._reconcileAll()));
+        reg.connect(Main.extensionManager, 'extension-state-changed', (_m, ext) => {
+            if (ext.uuid === DTP_UUID)
+                this._hookPanels();
+        });
         for (const actor of global.get_window_actors())
             this._track(actor.meta_window, false);
         this._reconcileAll();
@@ -134,17 +132,12 @@ export default class NeroWorkspaces extends Extension {
     }
 
     disable() {
-        for (const id of this._laters)
-            laterRemove(id);
-        this._laters.clear();
-        if (this._saveId) {
-            GLib.source_remove(this._saveId);
-            this._saveId = 0;
+        const savePending = this._saveId;
+        this._saveId = 0;
+        this._reg?.destroy(); // laters, the save timer and the signals
+        this._reg = null;
+        if (savePending)
             this._saveState();
-        }
-        for (const [obj, id] of this._signals ?? [])
-            obj.disconnect(id);
-        this._signals = null;
         this._unhookPanels();
         this._unbindKeys();
         this._teardownSwipe();
@@ -161,9 +154,7 @@ export default class NeroWorkspaces extends Extension {
             }
         }
         this._moving--;
-        for (const [w, ids] of this._winSignals)
-            ids.forEach(id => w.disconnect(id));
-        this._winSignals.clear();
+        this._winReg.destroy();
         this._vw.clear();
         this._giveBackMutter();
         this._settings = null;
@@ -256,11 +247,10 @@ export default class NeroWorkspaces extends Extension {
     _queueSave() {
         if (this._saveId)
             return;
-        this._saveId = GLib.timeout_add_seconds(GLib.PRIORITY_LOW, 2, () => {
+        this._saveId = this._reg?.timeoutSeconds(2, () => {
             this._saveId = 0;
             this._saveState();
-            return GLib.SOURCE_REMOVE;
-        });
+        }, GLib.PRIORITY_LOW) ?? 0;
     }
 
     _saveState() {
@@ -284,16 +274,7 @@ export default class NeroWorkspaces extends Extension {
     // ---- windows -----------------------------------------------------------
 
     _later(fn) {
-        const id = laterAdd(() => {
-            this._laters.delete(id);
-            try {
-                fn();
-            } catch (e) {
-                logError(e, '[nero-workspaces]');
-            }
-            return GLib.SOURCE_REMOVE;
-        });
-        this._laters.add(id);
+        this._reg?.later(fn); // nothing once disabled
     }
 
     _trackable(w) {
@@ -309,19 +290,15 @@ export default class NeroWorkspaces extends Extension {
         // _track would otherwise connect the signals a second time)
         const real = w.get_workspace()?.index() ?? VISIBLE;
         const vw = call('wsAdopt', real, this._currentOf(w.get_monitor()), this._count);
-        const ids = [
-            w.connect('workspace-changed', () => this._onWorkspaceChanged(w)),
-            w.connect('unmanaged', () => this._untrack(w)),
-        ];
-        this._winSignals.set(w, ids);
+        this._winReg.connect(w, 'workspace-changed', () => this._onWorkspaceChanged(w));
+        this._winReg.connect(w, 'unmanaged', () => this._untrack(w));
         this._vw.set(w, vw);
         if (fresh)
             this._place(w);
     }
 
     _untrack(w) {
-        this._winSignals.get(w)?.forEach(id => w.disconnect(id));
-        this._winSignals.delete(w);
+        this._winReg.disconnectObject(w);
         this._vw.delete(w);
     }
 
@@ -658,7 +635,7 @@ export default class NeroWorkspaces extends Extension {
             this._dtp.disconnect(this._dtpCreatedId);
         this._dtp = null;
         this._dtpCreatedId = 0;
-        if (this._settings && !this._signals) {
+        if (this._settings && !this._reg) {
             // disabling: give Dash to Panel its scroll action back
             const saved = this._settings.get_string('saved-dtp-scroll');
             const s = saved ? this._dtpSettings() : null;
