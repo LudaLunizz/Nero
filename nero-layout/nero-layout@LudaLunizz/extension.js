@@ -19,6 +19,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {ExtensionState} from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 import {call, plainRect} from './nero.js';
+import {makeLog, connectorOf, monitorForConnector} from './helpers.js';
 
 const FILE_VERSION = 1;
 // nero-workspaces sets up the fixed workspaces the saved workspace numbers refer to.
@@ -33,9 +34,7 @@ const DONE_FLAG = '__neroLayoutLoginDone';
 
 const stateFile = () => Gio.File.new_for_path(GLib.build_filenamev([GLib.get_user_state_dir(), 'nero', 'layout.json']));
 
-function log(msg) {
-    console.log(`[nero-layout] ${msg}`);
-}
+const log = makeLog('nero-layout');
 
 // Seconds since this GNOME Shell process started (Infinity if /proc cannot tell).
 function shellUptime() {
@@ -57,16 +56,6 @@ const anyMaximized = w => w.get_maximized ? w.get_maximized() !== 0
     : w.maximizedHorizontally || w.maximizedVertically;
 const maximize = w => w.get_maximized ? w.maximize(Meta.MaximizeFlags.BOTH) : w.maximize();
 const unmaximize = w => w.get_maximized ? w.unmaximize(Meta.MaximizeFlags.BOTH) : w.unmaximize();
-
-function connectorOf(index) {
-    const lm = global.backend.get_monitor_manager().get_logical_monitors().find(l => l.get_number() === index);
-    return lm?.get_monitors()[0]?.get_connector() ?? null;
-}
-
-// Monitor index for a saved connector, -1 if that monitor is not connected.
-function monitorFor(connector) {
-    return connector ? global.backend.get_monitor_manager().get_monitor_for_connector(connector) : -1;
-}
 
 // The desktop file id of a window's app, or null for windows that are not saved
 // (dialogs, helper windows, apps without a desktop file).
@@ -465,7 +454,7 @@ export default class NeroLayout extends Extension {
                 if (w.get_workspace()?.index() !== idx)
                     w.change_workspace_by_index(idx, false);
             }
-            const m = monitorFor(e.connector);
+            const m = monitorForConnector(e.connector);
             if (m < 0)
                 return; // that monitor is not connected: leave the window where it opened
             if (w.is_fullscreen() && !e.fullscreen)

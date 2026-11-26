@@ -8,6 +8,7 @@ import Meta from 'gi://Meta';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {call, plainRect} from './nero.js';
+import {monitorForConnector} from './helpers.js';
 
 const TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG];
 
@@ -27,11 +28,6 @@ function fit(window) {
 // prompt just opens under the pointer as before. A third-party polkit agent (for example
 // hyprpolkitagent) shows a normal window instead, which this does not touch.
 const PASSWORD_DIALOGS = ['AuthenticationDialog', 'KeyringDialog', 'NetworkSecretDialog', 'ShellMountPasswordDialog'];
-
-// Monitor index for a connector name, or -1 if it is empty or not connected.
-function monitorForConnector(connector) {
-    return connector ? global.backend.get_monitor_manager().get_monitor_for_connector(connector) : -1;
-}
 
 export default class KeepOnScreen extends Extension {
     enable() {

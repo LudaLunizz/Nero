@@ -28,6 +28,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as SwipeTracker from 'resource:///org/gnome/shell/ui/swipeTracker.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {call} from './nero.js';
+import {makeLog, connectorOf as connectorName} from './helpers.js';
 import {writeScrollPlugin} from './scrollSpeed.js';
 
 const STATE_VERSION = 1;
@@ -49,9 +50,7 @@ const laterRemove = id => {
         Meta.later_remove(id);
 };
 
-function log(msg) {
-    console.log(`[nero-workspaces] ${msg}`);
-}
+const log = makeLog('nero-workspaces');
 
 // Keybindings GNOME Shell handles with its workspace switcher, and their modes.
 const NO = Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW;
@@ -68,10 +67,8 @@ const TRACKED_TYPES = new Set([
     Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY,
 ]);
 
-function connectorOf(index) {
-    const lm = global.backend.get_monitor_manager().get_logical_monitors().find(l => l.get_number() === index);
-    return lm?.get_monitors()[0]?.get_connector() ?? `#${index}`;
-}
+// A monitor without a connector name is tracked as "#index".
+const connectorOf = index => connectorName(index, `#${index}`);
 
 export default class NeroWorkspaces extends Extension {
     enable() {

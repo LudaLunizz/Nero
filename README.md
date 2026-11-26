@@ -24,7 +24,7 @@ Needs Rust (edition 2024) with the WebAssembly target:
 
 ```sh
 rustup target add wasm32-unknown-unknown
-./core/build.sh       # builds nero_core.wasm and copies it + nero.js into both extensions
+./core/build.sh       # builds nero_core.wasm and copies it, nero.js and helpers.js into the extensions
 cd core && cargo test # the Rust tests
 ```
 
