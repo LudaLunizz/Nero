@@ -334,6 +334,10 @@ fn json_boundary() {
     // defaults: touchingRects without tol uses 10
     assert_eq!(abi::call(br#"{"f":"touchingRects","a":[{"x":0,"y":0,"width":10,"height":10},[{"x":15,"y":0,"width":10,"height":10}]]}"#), r#"{"ok":[0]}"#);
     assert!(abi::call(br#"{"f":"nope","a":[]}"#).starts_with(r#"{"err":"#));
+    assert_eq!(
+        abi::call(br#"{"f":"version","a":[]}"#),
+        format!(r#"{{"ok":"{}"}}"#, env!("CARGO_PKG_VERSION"))
+    );
     assert!(abi::call(br#"{"f":"cutAway","a":[1]}"#).starts_with(r#"{"err":"argument 0"#));
     assert!(abi::call(b"not json").starts_with(r#"{"err":"bad request"#));
     // a chain pointing at a tile that does not exist is an error, not a panic

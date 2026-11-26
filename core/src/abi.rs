@@ -40,6 +40,9 @@ fn ok<T: serde::Serialize>(v: T) -> Res {
 
 fn dispatch(f: &str, a: &[Value]) -> Res {
     match f {
+        // The version of this build; nero.js compares it with the one core/build.sh
+        // stamped into it, so a wasm and a loader from different builds are caught.
+        "version" => ok(env!("CARGO_PKG_VERSION")),
         "isTileVacant" => ok(fs::is_tile_vacant(
             &arg(a, 0, "tile")?,
             &arg::<Vec<Rect>>(a, 1, "occupied")?,
