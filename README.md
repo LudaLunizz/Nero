@@ -176,6 +176,8 @@ row of workspaces (4 by default) and switches on its own:
   scroll action says. This takes over Dash to Panel's own "Switch workspace" panel scroll action
   (set to "Nothing" while nero-workspaces runs, put back when it is switched off); any other panel
   scroll action you picked in Dash to Panel is left alone.
+- **Three-finger swipe** left or right on a touchpad switches the monitor under the pointer
+  (GNOME's own swipe, which slides all monitors, is switched off while this is on).
 - **Workspace keys** (Super+Page Up/Down, Ctrl+Alt+arrows, Super+Shift+Page Up/Down to take the
   window along, and the "switch to / move to workspace N" keys) act on the monitor of the
   focused window.
@@ -191,6 +193,17 @@ GNOME has fixed workspaces (workspaces per monitor + 1, *dynamic workspaces* off
 back when it is switched off, and every window comes back onto the screen then. The Activities
 overview still shows GNOME's real workspaces (the first one = what is on screen now).
 
+**Touchpad scroll speed.** GNOME has no setting for the two-finger scroll speed. nero-workspaces
+writes a small libinput plugin (`core/src/scroll_speed.lua`) to `~/.config/libinput/plugins/nero-scroll-speed.lua`;
+Mutter (GNOME 49+, libinput 1.30+) loads plugins from there at login. While exactly two fingers
+touch, it moves each finger's position *speed %* as far as the finger really moved, so scrolling
+(and pinch-to-zoom) slows down; one finger and three-or-more-finger gestures stay 1:1. At 100 % the
+file is removed. A new speed works from the next login. Delete the file to undo it by hand.
+
+**Settings window**: Extensions app → Nero Workspaces → Settings, or
+`gnome-extensions prefs nero-workspaces@LudaLunizz`. A *Touchpad* page (pointer speed = GNOME's
+own setting, two-finger scroll speed 0–100 %, the three-finger swipe) and a *Workspaces* page.
+
 Settings (`gsettings --schemadir ~/.local/share/gnome-shell/extensions/nero-workspaces@LudaLunizz/schemas
 set org.gnome.shell.extensions.nero-workspaces KEY VALUE`):
 
@@ -202,6 +215,8 @@ set org.gnome.shell.extensions.nero-workspaces KEY VALUE`):
 | `take-over-panel-scroll` | `true` | Handle Dash to Panel's panel scroll per monitor |
 | `scroll-threshold` | `1.0` | Scroll per step (1.0 = one wheel notch) |
 | `scroll-cooldown-ms` | `250` | Pause after a step in which scroll is ignored |
+| `three-finger-swipe` | `true` | Three-finger swipe switches the monitor under the pointer only |
+| `touchpad-scroll-speed` | `100` | Two-finger scroll speed in % (0–100), from the next login |
 
 ## License
 

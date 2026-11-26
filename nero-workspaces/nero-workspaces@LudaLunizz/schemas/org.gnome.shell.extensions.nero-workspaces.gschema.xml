@@ -34,6 +34,17 @@
       <summary>Pause between steps (ms)</summary>
       <description>After a step, scroll is ignored this long, so a fast wheel or a touchpad flick moves one workspace, not all of them.</description>
     </key>
+    <key name="three-finger-swipe" type="b">
+      <default>true</default>
+      <summary>Three-finger swipe switches one monitor</summary>
+      <description>A three-finger swipe on the touchpad switches the workspace of the monitor under the pointer only. Off = GNOME's own swipe (all monitors at once).</description>
+    </key>
+    <key name="touchpad-scroll-speed" type="i">
+      <range min="0" max="100"/>
+      <default>100</default>
+      <summary>Two-finger scroll speed (%)</summary>
+      <description>How fast two-finger scrolling (and pinching) goes on touchpads, 100 = GNOME's normal speed. Done by a libinput plugin in ~/.config/libinput/plugins that Mutter loads at login, so a change works from the next login.</description>
+    </key>
     <key name="saved-gnome-settings" type="s">
       <default>''</default>
       <summary>GNOME's own workspace settings (internal)</summary>
