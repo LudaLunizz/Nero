@@ -8,7 +8,9 @@
 //! `nero_call(ptr, len)` (which frees the request) and reads `nero_out_len()`
 //! bytes at the returned pointer. The answer stays valid until the next call.
 
-use crate::{Point, Rect, fit, free_space as fs, layout, line_groups as lg, resize};
+use crate::{
+    Point, Rect, fit, free_space as fs, layout, line_groups as lg, resize, workspaces as ws,
+};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::cell::RefCell;
@@ -159,6 +161,29 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
             &arg::<Vec<bool>>(a, 1, "used")?,
             &arg::<String>(a, 2, "app")?,
             &arg::<String>(a, 3, "title")?,
+        )),
+        "wsPlanSwitch" => ok(ws::plan_switch(
+            &arg::<Vec<ws::Win>>(a, 0, "windows")?,
+            arg(a, 1, "monitor")?,
+            arg(a, 2, "target")?,
+        )),
+        "wsAdopt" => ok(ws::adopt(
+            arg(a, 0, "real")?,
+            arg(a, 1, "current")?,
+            arg(a, 2, "count")?,
+        )),
+        "wsRealFor" => ok(ws::real_for(arg(a, 0, "vw")?, arg(a, 1, "current")?)),
+        "wsStep" => ok(ws::step(
+            arg(a, 0, "current")?,
+            arg(a, 1, "delta")?,
+            arg(a, 2, "count")?,
+            opt(a, 3, "wrap", false)?,
+        )),
+        "wsScroll" => ok(ws::scroll(
+            &arg(a, 0, "state")?,
+            &arg(a, 1, "event")?,
+            opt(a, 2, "threshold", 1.0)?,
+            opt(a, 3, "cooldownMs", 250.0)?,
         )),
         _ => Err(format!("unknown function {f:?}")),
     }

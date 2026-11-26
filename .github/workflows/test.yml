@@ -21,3 +21,5 @@ jobs:
       - run: glib-compile-schemas --strict --dry-run keep-onscreen/keep-onscreen@LudaLunizz/schemas
       - run: node --check nero-layout/nero-layout@LudaLunizz/extension.js
       - run: glib-compile-schemas --strict --dry-run nero-layout/nero-layout@LudaLunizz/schemas
+      - run: node --check nero-workspaces/nero-workspaces@LudaLunizz/extension.js
+      - run: glib-compile-schemas --strict --dry-run nero-workspaces/nero-workspaces@LudaLunizz/schemas

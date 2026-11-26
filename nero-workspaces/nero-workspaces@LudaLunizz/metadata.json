@@ -1,0 +1,18 @@
+{
+  "uuid": "nero-workspaces@LudaLunizz",
+  "name": "Nero Workspaces",
+  "description": "Every monitor switches its own workspaces: scroll on a monitor's Dash to Panel panel, or use the workspace keys, and only that monitor changes.",
+  "shell-version": [
+    "46",
+    "47",
+    "48",
+    "49",
+    "50"
+  ],
+  "session-modes": [
+    "user",
+    "unlock-dialog"
+  ],
+  "version": 1,
+  "settings-schema": "org.gnome.shell.extensions.nero-workspaces"
+}

@@ -1,7 +1,7 @@
 # Nero
 
 A window manager for GNOME: window placement tweaks for GNOME Shell (Wayland, GNOME 46–50), made for a
-multi-monitor desktop with portrait and small screens. Three parts:
+multi-monitor desktop with portrait and small screens. Four parts:
 
 1. **keep-onscreen**: a small standalone extension. New windows are shrunk and
    moved so they fit the monitor they open on (no more windows half off the edge).
@@ -9,6 +9,8 @@ multi-monitor desktop with portrait and small screens. Three parts:
    **18.0** by Domenico Ferraro, which changes how tiling, dragging and resizing behave.
 3. **nero-layout**: a standalone extension that remembers where every app window is and
    puts the windows back after the next login (after a shutdown, a crash or a log out).
+4. **nero-workspaces**: a standalone extension that gives every monitor its own workspaces:
+   scroll on a monitor's panel (or press the workspace keys) and only that monitor switches.
 
 The placement logic itself is **Rust** (`core/`), built to WebAssembly and run inside
 GNOME Shell by a small JS loader (`core/js/nero.js`). GNOME Shell only lets JavaScript
@@ -135,6 +137,53 @@ set org.gnome.shell.extensions.nero-layout KEY VALUE`):
 | `save-interval` | `60` | Seconds between saves |
 | `save-now` | `false` | Set to `true`: save at once |
 | `restore-now` | `false` | Set to `true`: put the open windows back on their saved spots and start missing apps, without logging out |
+
+## 4. nero-workspaces
+
+```sh
+./core/build.sh
+cp -r nero-workspaces/nero-workspaces@LudaLunizz ~/.local/share/gnome-shell/extensions/
+glib-compile-schemas ~/.local/share/gnome-shell/extensions/nero-workspaces@LudaLunizz/schemas
+# log out and back in (Wayland), then:
+gnome-extensions enable nero-workspaces@LudaLunizz
+```
+
+GNOME switches workspaces on all monitors at once. With nero-workspaces every monitor has its own
+row of workspaces (4 by default) and switches on its own:
+
+- **Scroll wheel / touchpad on a Dash to Panel panel** switches the monitor that panel is on. One
+  wheel notch = one workspace, also on high-resolution wheels and touchpads (which send many small
+  scroll events); after a step, scroll is ignored for 250 ms, so a fast spin or a flick moves one
+  workspace and not all of them. Scrolling over an app icon still does what Dash to Panel's icon
+  scroll action says. This takes over Dash to Panel's own "Switch workspace" panel scroll action
+  (set to "Nothing" while nero-workspaces runs, put back when it is switched off); any other panel
+  scroll action you picked in Dash to Panel is left alone.
+- **Workspace keys** (Super+Page Up/Down, Ctrl+Alt+arrows, Super+Shift+Page Up/Down to take the
+  window along, and the "switch to / move to workspace N" keys) act on the monitor of the
+  focused window.
+- **Activating a window on a hidden workspace** (taskbar click, Alt+Tab, a notification) switches
+  only that window's monitor to the window's workspace.
+- A window dragged to another monitor joins the workspace that monitor shows. A "2 / 4" OSD shows
+  on the monitor that switched. What each monitor shows is kept in `~/.local/state/nero/workspaces.json`.
+
+**How.** GNOME stays on its first workspace, which is the one on screen; a window on a workspace
+that its monitor does not show is parked on GNOME's workspace *n + 1*. So while nero-workspaces runs,
+GNOME has fixed workspaces (workspaces per monitor + 1, *dynamic workspaces* off) on all monitors
+(*workspaces on primary display only* off). Your values for those three settings are kept and put
+back when it is switched off, and every window comes back onto the screen then. The Activities
+overview still shows GNOME's real workspaces (the first one = what is on screen now).
+
+Settings (`gsettings --schemadir ~/.local/share/gnome-shell/extensions/nero-workspaces@LudaLunizz/schemas
+set org.gnome.shell.extensions.nero-workspaces KEY VALUE`):
+
+| Key | Default | |
+|---|---|---|
+| `workspaces-per-monitor` | `4` | Workspaces every monitor has (1–12) |
+| `wrap-around` | `false` | Scrolling past the last workspace goes to the first one |
+| `show-osd` | `true` | Show "2 / 4" on the monitor that switched |
+| `take-over-panel-scroll` | `true` | Handle Dash to Panel's panel scroll per monitor |
+| `scroll-threshold` | `1.0` | Scroll per step (1.0 = one wheel notch) |
+| `scroll-cooldown-ms` | `250` | Pause after a step in which scroll is ignored |
 
 ## License
 

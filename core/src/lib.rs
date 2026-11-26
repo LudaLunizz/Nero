@@ -13,6 +13,7 @@ pub mod free_space;
 pub mod layout;
 pub mod line_groups;
 pub mod resize;
+pub mod workspaces;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
