@@ -28,6 +28,19 @@ const VISIBLE = 0;
 
 const stateFile = () => Gio.File.new_for_path(GLib.build_filenamev([GLib.get_user_state_dir(), 'nero', 'workspaces.json']));
 
+// GNOME 47 moved the "later" queue to global.compositor.get_laters(); 46 has Meta.later_add.
+const laterAdd = fn => {
+    const laters = global.compositor?.get_laters?.();
+    return laters ? laters.add(Meta.LaterType.BEFORE_REDRAW, fn) : Meta.later_add(Meta.LaterType.BEFORE_REDRAW, fn);
+};
+const laterRemove = id => {
+    const laters = global.compositor?.get_laters?.();
+    if (laters)
+        laters.remove(id);
+    else
+        Meta.later_remove(id);
+};
+
 function log(msg) {
     console.log(`[nero-workspaces] ${msg}`);
 }
@@ -94,7 +107,7 @@ export default class NeroWorkspaces extends Extension {
 
     disable() {
         for (const id of this._laters)
-            global.compositor.get_laters().remove(id);
+            laterRemove(id);
         this._laters.clear();
         if (this._saveId) {
             GLib.source_remove(this._saveId);
@@ -230,8 +243,7 @@ export default class NeroWorkspaces extends Extension {
     // ---- windows -----------------------------------------------------------
 
     _later(fn) {
-        const laters = global.compositor.get_laters();
-        const id = laters.add(Meta.LaterType.BEFORE_REDRAW, () => {
+        const id = laterAdd(() => {
             this._laters.delete(id);
             try {
                 fn();
