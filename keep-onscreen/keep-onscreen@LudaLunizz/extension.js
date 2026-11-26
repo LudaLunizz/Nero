@@ -2,7 +2,8 @@
 // of the monitor it opened on. Useful with portrait or small monitors, where apps open at
 // their usual size and mutter centres them, so part of the window ends up off-screen.
 // The fit itself is Rust (Nero's core/src/fit.rs), run as WebAssembly through nero.js.
-// Optional: GNOME Shell's password prompts open on one chosen monitor (password-prompt-monitor).
+// Optional: GNOME Shell's password prompts open on one chosen monitor (password-prompt-monitor)
+// and without the dark overlay over all monitors (password-prompt-dim false).
 import Meta from 'gi://Meta';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -39,6 +40,11 @@ export default class KeepOnScreen extends Extension {
         const proto = ModalDialog.ModalDialog.prototype;
         const orig = this._open = proto.open;
         proto.open = function (...args) {
+            // The overlay is the dialog's lightbox; it fades in inside open(), so switch it off first.
+            // The prompt still takes the keyboard until it is answered or cancelled.
+            if (this._lightbox && PASSWORD_DIALOGS.includes(this.constructor.name) &&
+                !settings.get_boolean('password-prompt-dim'))
+                this._lightbox.lightOn = () => {};
             const ok = orig.apply(this, args);
             if (ok && PASSWORD_DIALOGS.includes(this.constructor.name)) {
                 const idx = monitorForConnector(settings.get_string('password-prompt-monitor'));
