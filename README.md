@@ -34,15 +34,20 @@ cd core && cargo test # the Rust tests
 
 ```sh
 ./core/build.sh
-cp -r keep-onscreen/keep-onscreen@LudaLunizz ~/.local/share/gnome-shell/extensions/
+cp -r keep-onscreen/nero-keep-onscreen@LudaLunizz ~/.local/share/gnome-shell/extensions/
 # log out and back in (Wayland), then:
-gnome-extensions enable keep-onscreen@LudaLunizz
+gnome-extensions enable nero-keep-onscreen@LudaLunizz
 ```
+
+The extension is called `nero-keep-onscreen@LudaLunizz` (it was `keep-onscreen@LudaLunizz` until
+26 Nov 2026: disable and remove the old directory when you upgrade; the settings carry over, the
+schema is the same). Run only one extension that handles GNOME's password prompts: a second copy
+under another name replaces the same `ModalDialog.open` function, and the two fight over it.
 
 Only acts once per window, on its first frame. Maximized and full-screen windows are left alone.
 
 The copy step above also needs the settings schema compiled once:
-`glib-compile-schemas ~/.local/share/gnome-shell/extensions/keep-onscreen@LudaLunizz/schemas`
+`glib-compile-schemas ~/.local/share/gnome-shell/extensions/nero-keep-onscreen@LudaLunizz/schemas`
 
 **Password prompts on one monitor (optional).** GNOME Shell opens its password prompts
 (polkit, keyring unlock, Wi-Fi/VPN secrets, encrypted disk unlock) on the monitor under the
@@ -50,7 +55,7 @@ pointer. To always get them on one monitor, give its connector name (for example
 `ls /sys/class/drm` lists them as `card0-HDMI-A-2`, GNOME names that `HDMI-2`):
 
 ```sh
-gsettings --schemadir ~/.local/share/gnome-shell/extensions/keep-onscreen@LudaLunizz/schemas \
+gsettings --schemadir ~/.local/share/gnome-shell/extensions/nero-keep-onscreen@LudaLunizz/schemas \
   set org.gnome.shell.extensions.keep-onscreen password-prompt-monitor HDMI-2
 ```
 
@@ -69,7 +74,7 @@ ExecCondition=/bin/sh -c 'case ":$XDG_CURRENT_DESKTOP:" in *:GNOME:*) exit 1;; e
 while one of these prompts is open. To keep the other monitors as they are:
 
 ```sh
-gsettings --schemadir ~/.local/share/gnome-shell/extensions/keep-onscreen@LudaLunizz/schemas \
+gsettings --schemadir ~/.local/share/gnome-shell/extensions/nero-keep-onscreen@LudaLunizz/schemas \
   set org.gnome.shell.extensions.keep-onscreen password-prompt-dim false
 ```
 

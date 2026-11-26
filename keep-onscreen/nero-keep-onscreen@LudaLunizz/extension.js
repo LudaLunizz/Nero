@@ -39,7 +39,12 @@ export default class KeepOnScreen extends Extension {
         const settings = this._settings;
         const proto = ModalDialog.ModalDialog.prototype;
         const orig = this._open = proto.open;
-        proto.open = function (...args) {
+        this._on = {active: true};
+        const on = this._on;
+        this._frameIds = new Map(); // actor -> first-frame handler id
+        proto.open = this._patched = function (...args) {
+            if (!on.active)
+                return orig.apply(this, args); // disabled, but another extension still calls us
             // The overlay is the dialog's lightbox; it fades in inside open(), so switch it off first.
             // The prompt still takes the keyboard until it is answered or cancelled.
             if (this._lightbox && PASSWORD_DIALOGS.includes(this.constructor.name) &&
@@ -58,15 +63,35 @@ export default class KeepOnScreen extends Extension {
             if (!actor)
                 return;
             const id = actor.connect('first-frame', () => {
+                this._frameIds.delete(actor);
                 actor.disconnect(id);
                 fit(window);
             });
+            this._frameIds.set(actor, id);
         });
     }
 
     disable() {
-        ModalDialog.ModalDialog.prototype.open = this._open;
+        // Put back the original open() only if ours is still the one in place: another
+        // extension that patched it after us has our function as its original, and
+        // overwriting it would drop its patch. Ours then only passes calls on.
+        this._on.active = false;
+        this._on = null;
+        const proto = ModalDialog.ModalDialog.prototype;
+        if (proto.open === this._patched)
+            proto.open = this._open;
+        else
+            console.warn('[nero-keep-onscreen] another extension replaced ModalDialog.open after us: left as it is');
         this._open = null;
+        this._patched = null;
+        for (const [actor, id] of this._frameIds) {
+            try {
+                actor.disconnect(id);
+            } catch {
+                // actor already gone
+            }
+        }
+        this._frameIds = null;
         this._settings = null;
         global.display.disconnect(this._id);
         this._id = 0;
