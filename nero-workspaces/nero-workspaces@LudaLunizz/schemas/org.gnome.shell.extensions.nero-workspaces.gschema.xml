@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.nero-workspaces" path="/org/gnome/shell/extensions/nero-workspaces/">
+    <key name="workspaces-per-monitor" type="i">
+      <range min="1" max="12"/>
+      <default>4</default>
+      <summary>Workspaces per monitor</summary>
+      <description>How many workspaces every monitor has.</description>
+    </key>
+    <key name="wrap-around" type="b">
+      <default>false</default>
+      <summary>Go round</summary>
+      <description>Scrolling past the last workspace goes to the first one (and back).</description>
+    </key>
+    <key name="show-osd" type="b">
+      <default>true</default>
+      <summary>Show the workspace number</summary>
+      <description>Show "2 / 4" on the monitor that switched.</description>
+    </key>
+    <key name="take-over-panel-scroll" type="b">
+      <default>true</default>
+      <summary>Scroll on Dash to Panel switches that monitor only</summary>
+      <description>When Dash to Panel's panel scroll action is "Switch workspace", Nero turns it off in Dash to Panel and does it per monitor instead (put back when Nero Workspaces is switched off).</description>
+    </key>
+    <key name="scroll-threshold" type="d">
+      <range min="0.1" max="10.0"/>
+      <default>1.0</default>
+      <summary>Scroll per step</summary>
+      <description>How much smooth scroll one workspace step needs (1.0 = one wheel notch).</description>
+    </key>
+    <key name="scroll-cooldown-ms" type="i">
+      <range min="0" max="2000"/>
+      <default>250</default>
+      <summary>Pause between steps (ms)</summary>
+      <description>After a step, scroll is ignored this long, so a fast wheel or a touchpad flick moves one workspace, not all of them.</description>
+    </key>
+    <key name="saved-gnome-settings" type="s">
+      <default>''</default>
+      <summary>GNOME's own workspace settings (internal)</summary>
+      <description>dynamic-workspaces, workspaces-only-on-primary and num-workspaces from before Nero Workspaces was switched on; put back when it is switched off.</description>
+    </key>
+    <key name="saved-dtp-scroll" type="s">
+      <default>''</default>
+      <summary>Dash to Panel's panel scroll action (internal)</summary>
+      <description>Put back when Nero Workspaces is switched off.</description>
+    </key>
+  </schema>
+</schemalist>
