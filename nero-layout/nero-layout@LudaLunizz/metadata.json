@@ -1,0 +1,14 @@
+{
+  "uuid": "nero-layout@LudaLunizz",
+  "name": "Nero Layout",
+  "description": "Remembers where every app window is (monitor, position, size, workspace, maximized/full screen) and puts the windows back after the next login, starting the apps that are not running yet.",
+  "shell-version": [
+    "46",
+    "47",
+    "48",
+    "49",
+    "50"
+  ],
+  "version": 1,
+  "settings-schema": "org.gnome.shell.extensions.nero-layout"
+}

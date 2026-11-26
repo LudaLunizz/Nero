@@ -340,3 +340,27 @@ fn json_boundary() {
     let bad = br#"{"f":"toggleChain","a":[[],{"vertical":true,"c":0.5,"from":0,"to":1,"segments":[{"prev":[3],"next":[],"from":0,"to":1}]}]}"#;
     assert!(abi::call(bad).starts_with(r#"{"err":"#));
 }
+
+#[test]
+fn layout_through_the_json_boundary() {
+    assert_eq!(
+        abi::call(br#"{"f":"toSpot","a":[{"x":1380,"y":1200,"width":1280,"height":696},{"x":1080,"y":1120,"width":2560,"height":1392}]}"#),
+        r#"{"ok":{"fx":0.1172,"fy":0.0575,"fw":0.5,"fh":0.5}}"#
+    );
+    assert_eq!(
+        abi::call(br#"{"f":"fromSpot","a":[{"fx":0.9,"fy":0,"fw":0.5,"fh":0.5},{"x":0,"y":0,"width":1000,"height":800}]}"#),
+        r#"{"ok":{"x":500.0,"y":0.0,"width":500.0,"height":400.0}}"#
+    );
+    assert_eq!(
+        abi::call(br#"{"f":"matchWindow","a":[[{"app":"a.desktop","title":"One"},{"app":"a.desktop","title":"Two"}],[false,false],"a.desktop","Two"]}"#),
+        r#"{"ok":1}"#
+    );
+    assert_eq!(
+        abi::call(br#"{"f":"matchWindow","a":[[{"app":"a.desktop","title":"One"}],[true],"a.desktop","One"]}"#),
+        r#"{"ok":null}"#
+    );
+    assert!(
+        abi::call(br#"{"f":"matchWindow","a":[[],[],5,""]}"#)
+            .starts_with(r#"{"err":"argument 2 (app)"#)
+    );
+}

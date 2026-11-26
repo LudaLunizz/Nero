@@ -19,3 +19,5 @@ jobs:
       - run: ./tests/run.sh
       - run: node --check keep-onscreen/keep-onscreen@LudaLunizz/extension.js
       - run: glib-compile-schemas --strict --dry-run keep-onscreen/keep-onscreen@LudaLunizz/schemas
+      - run: node --check nero-layout/nero-layout@LudaLunizz/extension.js
+      - run: glib-compile-schemas --strict --dry-run nero-layout/nero-layout@LudaLunizz/schemas

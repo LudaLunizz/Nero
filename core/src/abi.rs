@@ -8,7 +8,7 @@
 //! `nero_call(ptr, len)` (which frees the request) and reads `nero_out_len()`
 //! bytes at the returned pointer. The answer stays valid until the next call.
 
-use crate::{Point, Rect, fit, free_space as fs, line_groups as lg, resize};
+use crate::{Point, Rect, fit, free_space as fs, layout, line_groups as lg, resize};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::cell::RefCell;
@@ -145,6 +145,20 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
         "fitToWorkArea" => ok(fit::fit_to_work_area(
             &arg(a, 0, "frame")?,
             &arg(a, 1, "workArea")?,
+        )),
+        "toSpot" => ok(layout::to_spot(
+            &arg(a, 0, "frame")?,
+            &arg(a, 1, "workArea")?,
+        )),
+        "fromSpot" => ok(layout::from_spot(
+            &arg(a, 0, "spot")?,
+            &arg(a, 1, "workArea")?,
+        )),
+        "matchWindow" => ok(layout::match_window(
+            &arg::<Vec<layout::Saved>>(a, 0, "saved")?,
+            &arg::<Vec<bool>>(a, 1, "used")?,
+            &arg::<String>(a, 2, "app")?,
+            &arg::<String>(a, 3, "title")?,
         )),
         _ => Err(format!("unknown function {f:?}")),
     }
