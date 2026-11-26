@@ -1,6 +1,6 @@
 diff -ruN a/components/editor/layoutEditor.js b/components/editor/layoutEditor.js
 --- a/components/editor/layoutEditor.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/editor/layoutEditor.js	2026-11-26 16:57:24.561605671 +0100
++++ b/components/editor/layoutEditor.js	2026-11-26 20:39:16.417512037 +0100
 @@ -1,5 +1,5 @@
  import { registerGObjectClass } from "../../utils/gjs.js";
 -import { GObject, St, Clutter, Shell } from "../../gi/ext.js";
@@ -129,7 +129,7 @@ diff -ruN a/components/editor/layoutEditor.js b/components/editor/layoutEditor.j
      this._sliders = [];
 diff -ruN a/components/layout/lineGroups.js b/components/layout/lineGroups.js
 --- a/components/layout/lineGroups.js	1970-01-01 01:00:00.000000000 +0100
-+++ b/components/layout/lineGroups.js	2026-11-26 16:57:24.561677590 +0100
++++ b/components/layout/lineGroups.js	2026-11-26 20:39:16.417554736 +0100
 @@ -0,0 +1,60 @@
 +// Local patch (2026-11-18): line groups for the layout editor. A "line" is one
 +// tile edge shared by tiles on both sides; tiles sharing a group id belong to
@@ -193,7 +193,7 @@ diff -ruN a/components/layout/lineGroups.js b/components/layout/lineGroups.js
 +}
 diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tilePreview.js
 --- a/components/tilepreview/tilePreview.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilepreview/tilePreview.js	2026-11-26 16:57:24.563064188 +0100
++++ b/components/tilepreview/tilePreview.js	2026-11-26 20:39:16.417991633 +0100
 @@ -87,20 +87,23 @@
      this._showing = true;
      this.show();
@@ -208,8 +208,8 @@ diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tileP
 -        opacity: 255,
 -        duration: ease ? GlobalState.get().tilePreviewAnimationTime : 0,
 -        mode: Clutter.AnimationMode.EASE_OUT_QUAD
-+        // the fluid shape is drawn at half strength so it is less in your face
-+        opacity: fluid ? 128 : 255,
++        // local patch: the green target is drawn at 70% (Ctrl-drag overlay 30% lighter)
++        opacity: this.has_style_class_name("selection-tile-preview") ? 178 : 255,
 +        duration: ease ? fluid ? Math.max(GlobalState.get().tilePreviewAnimationTime, 220) : GlobalState.get().tilePreviewAnimationTime : 0,
 +        mode: fluid ? Clutter.AnimationMode.EASE_OUT_CUBIC : Clutter.AnimationMode.EASE_OUT_QUAD
        });
@@ -218,13 +218,13 @@ diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tileP
        this.set_size(this.innerWidth, this.innerHeight);
        this.ease({
 -        opacity: 255,
-+        opacity: this.has_style_class_name("fluid-shape") ? 128 : 255,
++        opacity: this.has_style_class_name("selection-tile-preview") ? 178 : 255,
          duration: ease ? GlobalState.get().tilePreviewAnimationTime : 0,
          mode: Clutter.AnimationMode.EASE_OUT_QUAD
        });
 diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/resizeManager.js
 --- a/components/tilingsystem/resizeManager.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilingsystem/resizeManager.js	2026-11-26 16:57:24.563140077 +0100
++++ b/components/tilingsystem/resizeManager.js	2026-11-26 20:39:16.418122932 +0100
 @@ -1,8 +1,12 @@
 -import { St, Meta } from "../../gi/ext.js";
 +import { St, Meta, Clutter } from "../../gi/ext.js";
@@ -317,9 +317,22 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
      });
      return result;
    }
+diff -ruN a/components/tilingsystem/tilingLayout.js b/components/tilingsystem/tilingLayout.js
+--- a/components/tilingsystem/tilingLayout.js	2026-10-17 12:39:11.000000000 +0200
++++ b/components/tilingsystem/tilingLayout.js	2026-11-26 20:39:16.418203732 +0100
+@@ -93,7 +93,8 @@
+     this.ease({
+       x: this.x,
+       y: this.y,
+-      opacity: 255,
++      // local patch: layout tiles 30% lighter while dragging with Ctrl
++      opacity: 178,
+       duration: ease ? GlobalState.get().tilePreviewAnimationTime : 0,
+       mode: Clutter.AnimationMode.EASE_OUT_QUAD
+     });
 diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/tilingManager.js
 --- a/components/tilingsystem/tilingManager.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilingsystem/tilingManager.js	2026-11-26 16:57:24.563808501 +0100
++++ b/components/tilingsystem/tilingManager.js	2026-11-26 20:39:16.418032513 +0100
 @@ -27,6 +27,7 @@
  import { KeyBindingsDirection } from "../../keybindings.js";
  import TilingShellWindowManager from "../../components/windowManager/tilingShellWindowManager.js";
@@ -739,7 +752,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      let bestTileIndex = 0;
 diff -ruN a/components/window_menu/overriddenWindowMenu.js b/components/window_menu/overriddenWindowMenu.js
 --- a/components/window_menu/overriddenWindowMenu.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/window_menu/overriddenWindowMenu.js	2026-11-26 16:57:24.565022791 +0100
++++ b/components/window_menu/overriddenWindowMenu.js	2026-11-26 20:39:16.418561839 +0100
 @@ -170,6 +170,13 @@
          );
        });
@@ -766,7 +779,7 @@ diff -ruN a/components/window_menu/overriddenWindowMenu.js b/components/window_m
  });
 diff -ruN a/components/windowsSuggestions/tilingLayoutWithSuggestions.js b/components/windowsSuggestions/tilingLayoutWithSuggestions.js
 --- a/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-26 16:57:24.564969901 +0100
++++ b/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-26 20:39:16.418521409 +0100
 @@ -1,7 +1,7 @@
  import { registerGObjectClass } from "../../utils/gjs.js";
 -import { Clutter } from "../../gi/ext.js";
@@ -833,7 +846,7 @@ diff -ruN a/components/windowsSuggestions/tilingLayoutWithSuggestions.js b/compo
        this._previews.indexOf(preview),
 diff -ruN a/extension.js b/extension.js
 --- a/extension.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/extension.js	2026-11-26 16:57:24.565435047 +0100
++++ b/extension.js	2026-11-26 20:39:16.418702298 +0100
 @@ -19,7 +19,7 @@
   * SPDX-License-Identifier: GPL-3.0-or-later
   */
@@ -889,7 +902,7 @@ diff -ruN a/extension.js b/extension.js
      this._keybindings?.destroy();
 diff -ruN a/indicator/indicator.js b/indicator/indicator.js
 --- a/indicator/indicator.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/indicator/indicator.js	2026-11-26 16:57:24.566627227 +0100
++++ b/indicator/indicator.js	2026-11-26 20:39:16.419958468 +0100
 @@ -1,4 +1,4 @@
 -import { St, Clutter, Shell, Gio } from "../gi/ext.js";
 +import { St, Clutter, Shell, Gio, Meta } from "../gi/ext.js";
@@ -1059,7 +1072,7 @@ diff -ruN a/indicator/indicator.js b/indicator/indicator.js
      this._layoutEditor?.destroy();
 diff -ruN a/stylesheet.css b/stylesheet.css
 --- a/stylesheet.css	2026-10-17 12:39:08.000000000 +0200
-+++ b/stylesheet.css	2026-11-26 16:57:24.567029594 +0100
++++ b/stylesheet.css	2026-11-26 20:39:16.420137977 +0100
 @@ -205,3 +205,8 @@
    border-radius-value: 6px;
    border-width-value: 1px;
@@ -1071,7 +1084,7 @@ diff -ruN a/stylesheet.css b/stylesheet.css
 +}
 diff -ruN a/utils/freeSpace.js b/utils/freeSpace.js
 --- a/utils/freeSpace.js	1970-01-01 01:00:00.000000000 +0100
-+++ b/utils/freeSpace.js	2026-11-26 16:57:24.572547936 +0100
++++ b/utils/freeSpace.js	2026-11-26 20:39:16.423775030 +0100
 @@ -0,0 +1,29 @@
 +// Local patch: window placement logic (free space, hard frames, fill free
 +// space, fluid drag shape, Ctrl-linked resize). The logic itself is Rust, in
