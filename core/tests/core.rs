@@ -1,5 +1,6 @@
-// Rust-side tests: the same cases as the JS tests in ../tests (which run the
-// WebAssembly build through the JS wrappers), plus the JSON boundary.
+// Rust-side tests of the placement logic, plus the JSON boundary. These were the
+// pure-logic JS tests once; ../tests keeps only what needs GJS (the wrappers
+// in the Tiling Shell patch, the loader, the Registry).
 use nero_core::free_space::*;
 use nero_core::line_groups::*;
 use nero_core::resize::{
@@ -514,4 +515,125 @@ fn linked_resize_through_the_json_boundary() {
         out,
         r#"{"ok":{"x":1497.0,"y":0.0,"width":500.0,"height":1440.0}}"#
     );
+}
+
+#[test]
+fn grow_into_free_space_overlap_still_blocks() {
+    let a = r(0.0, 0.0, 2560.0, 1440.0);
+    // 5 px overlap with the right neighbour still blocks
+    assert_eq!(
+        grow_into_free_space(
+            &r(600.0, 0.0, 1005.0, 1440.0),
+            &[r(1600.0, 0.0, 960.0, 1440.0)],
+            &a,
+            10.0
+        ),
+        r(0.0, 0.0, 1600.0, 1440.0)
+    );
+}
+
+#[test]
+fn fluid_more_cases() {
+    let area = r(0.0, 0.0, 1000.0, 600.0);
+    let tiles = [
+        r(0.0, 0.0, 500.0, 600.0),
+        r(500.0, 0.0, 500.0, 300.0),
+        r(500.0, 300.0, 500.0, 300.0),
+    ];
+    let p = |x, y| Point { x, y };
+    let f = |obstacles: &[Rect], pt| fluid_shape(&tiles, obstacles, &area, pt, 0.33);
+    assert_eq!(f(&[], p(100.0, 100.0)), Some(tiles[0]));
+    // left window shrunk to 400: the bottom free tile stretches too
+    let shrunk = [r(0.0, 0.0, 400.0, 600.0)];
+    assert_eq!(
+        f(&shrunk, p(700.0, 500.0)),
+        Some(r(400.0, 300.0, 600.0, 300.0))
+    );
+    // L-shaped space: a window in the top-right tile only
+    let top = [r(500.0, 0.0, 500.0, 300.0)];
+    assert_eq!(f(&top, p(100.0, 100.0)), Some(tiles[0]));
+    assert_eq!(f(&top, p(700.0, 500.0)), Some(tiles[2]));
+}
+
+#[test]
+fn adjacency_more_cases() {
+    let (a, b) = (r(0.0, 0.0, 300.0, 500.0), r(300.0, 600.0, 300.0, 500.0));
+    assert!(!is_adjacent(&a, &b, Side::Right, 10.0), "no shared length");
+    let (up, down) = (r(0.0, 0.0, 500.0, 300.0), r(0.0, 290.0, 500.0, 300.0));
+    assert!(is_adjacent(&up, &down, Side::Bottom, 10.0));
+    assert!(is_adjacent(&down, &up, Side::Top, 10.0));
+    assert!(!is_collinear(
+        &r(465.0, 215.0, 1195.0, 600.0),
+        &r(0.0, 1000.0, 465.0, 300.0),
+        Side::Top,
+        10.0
+    ));
+}
+
+#[test]
+fn frames_more_cases() {
+    let t = [TOP, MID, BOT];
+    // a window spanning top+middle, dropped on top, goes to the nearest free frame
+    assert_eq!(
+        place_in_frames(&t, &[row(0.0, 1920.0)], &TOP),
+        vec![Move { i: 0, rect: MID }]
+    );
+}
+
+#[test]
+fn fill_gaps_corner_closed() {
+    let l = r(0.0, 0.0, 2560.0, 1440.0);
+    // top-left of 2-1-2 closed: bottom-left grows up, the middle stays
+    let rects = [
+        r(0.0, 720.0, 563.0, 720.0),
+        r(563.0, 0.0, 1434.0, 1440.0),
+        r(1997.0, 0.0, 563.0, 720.0),
+        r(1997.0, 720.0, 563.0, 720.0),
+    ];
+    let want = [r(0.0, 0.0, 563.0, 1440.0), rects[1], rects[2], rects[3]];
+    assert_eq!(fill_gaps(&rects.map(Some), &l), want.map(Some).to_vec());
+}
+
+#[test]
+fn line_groups_attach_and_separate() {
+    // every horizontal chain is three pieces, none attached, each piece joins its
+    // two sides through exactly one shared group
+    let check_separate = |t: &[Tile]| {
+        for c in find_chains(t).iter().filter(|c| !c.vertical) {
+            assert_eq!(c.segments.len(), 3);
+            assert!(!is_attached(t, c));
+            for s in &c.segments {
+                let shared = t[s.prev[0]]
+                    .groups
+                    .iter()
+                    .filter(|g| t[s.next[0]].groups.contains(g))
+                    .count();
+                assert_eq!(shared, 1);
+            }
+        }
+    };
+    let mut t = l1();
+    let h = pick_chain(&t, 0.1, 0.51, 2560.0, 1440.0, 60.0).unwrap();
+    assert_eq!(toggle_chain(&mut t, &h), Toggle::Attached);
+    let h = find_chains(&t).into_iter().find(|c| !c.vertical).unwrap();
+    assert_eq!(toggle_chain(&mut t, &h), Toggle::Separated);
+    check_separate(&t);
+
+    // vertical line x = .22: attach, then separate
+    let mut t = l1();
+    let v = pick_chain(&t, 0.221, 0.25, 2560.0, 1440.0, 60.0).unwrap();
+    assert!(v.vertical);
+    let at22 = |t: &[Tile]| {
+        find_chains(t)
+            .into_iter()
+            .find(|c| c.vertical && (c.c - 0.22).abs() < 0.01)
+            .unwrap()
+    };
+    assert_eq!(toggle_chain(&mut t, &v), Toggle::Attached);
+    assert!(is_attached(&t, &at22(&t)));
+    let c = at22(&t);
+    assert_eq!(toggle_chain(&mut t, &c), Toggle::Separated);
+    // tile count and geometry untouched
+    assert_eq!(t.len(), 6);
+    assert_eq!(t[2].x, 0.22);
 }
