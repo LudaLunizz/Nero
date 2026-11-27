@@ -8,7 +8,6 @@ for t in test-freeSpace test-frames test-fillfree test-fluid test-linegroups tes
 echo "== test-loader-version"; gjs -m test-loader-version.mjs
 echo "== test-registry"; gjs -m test-registry.mjs
 echo "== test-ws-model"; gjs -m test-ws-model.mjs
-echo "== test-prompt-choices"; gjs -m test-prompt-choices.mjs
 echo "== test-build-check"; ./test-build-check.sh
 echo "== test-sysmon"; ./test-sysmon.sh
 echo "all tests passed"

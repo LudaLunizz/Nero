@@ -21,7 +21,6 @@ jobs:
       - run: node --check core/js/helpers.js
       - run: node --check keep-onscreen/nero-keep-onscreen@LudaLunizz/extension.js
       - run: node --check keep-onscreen/nero-keep-onscreen@LudaLunizz/prefs.js
-      - run: node --check keep-onscreen/nero-keep-onscreen@LudaLunizz/promptChoices.js
       - run: glib-compile-schemas --strict --dry-run keep-onscreen/nero-keep-onscreen@LudaLunizz/schemas
       - run: node --check nero-layout/nero-layout@LudaLunizz/extension.js
       - run: glib-compile-schemas --strict --dry-run nero-layout/nero-layout@LudaLunizz/schemas

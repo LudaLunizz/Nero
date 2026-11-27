@@ -330,7 +330,7 @@ fn json_boundary() {
     // keys keep the JS order, so JSON.stringify of a result matches the old JS
     assert_eq!(abi::call(br#"{"f":"cutAway","a":[{"x":0,"y":0,"width":10,"height":10},{"x":0,"y":0,"width":10,"height":10}]}"#), r#"{"ok":null}"#);
     assert_eq!(
-        abi::call(br#"{"f":"fitToWorkArea","a":[{"x":-5,"y":0,"width":10,"height":10},{"x":0,"y":0,"width":100,"height":100}]}"#),
+        abi::call(br#"{"f":"koFit","a":[{"windowType":"NORMAL","monitor":0,"frame":{"x":-5,"y":0,"width":10,"height":10},"workArea":{"x":0,"y":0,"width":100,"height":100},"maximized":false,"fullscreen":false}]}"#),
         r#"{"ok":{"x":0.0,"y":0.0,"width":10.0,"height":10.0}}"#
     );
     // defaults: touchingRects without tol uses 10

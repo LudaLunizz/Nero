@@ -9,7 +9,7 @@
 //! bytes at the returned pointer. The answer stays valid until the next call.
 
 use crate::{
-    Point, Rect, fit, free_space as fs, layout_model as lm, line_groups as lg, resize,
+    Point, Rect, free_space as fs, keep_model as km, layout_model as lm, line_groups as lg, resize,
     touchpad as tp, ws_model as wm,
 };
 use serde::de::DeserializeOwned;
@@ -171,10 +171,6 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
             &arg::<Vec<(Rect, Rect)>>(a, 3, "partners")?,
             arg(a, 4, "reach")?,
         )),
-        "fitToWorkArea" => ok(fit::fit_to_work_area(
-            &arg(a, 0, "frame")?,
-            &arg(a, 1, "workArea")?,
-        )),
         "wsInit" => ok(wm::start(
             opt::<Option<String>>(a, 0, "saved", None)?.as_deref(),
             arg(a, 1, "config")?,
@@ -300,6 +296,19 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
             arg(a, 1, "run")?,
             &arg::<Vec<lm::AppInfo>>(a, 2, "apps")?,
             &arg::<Vec<lm::AutostartEntry>>(a, 3, "autostart")?,
+        )),
+        "koFit" => ok(km::fit(&arg(a, 0, "window")?)),
+        "koPromptBefore" => ok(km::prompt_before(
+            &arg::<String>(a, 0, "className")?,
+            arg(a, 1, "dim")?,
+        )),
+        "koPromptAfter" => ok(km::prompt_after(
+            &arg::<String>(a, 0, "className")?,
+            arg(a, 1, "monitor")?,
+        )),
+        "koPromptChoices" => ok(km::prompt_choices(
+            &arg::<Vec<km::Monitor>>(a, 0, "monitors")?,
+            opt::<Option<String>>(a, 1, "saved", None)?.as_deref(),
         )),
         _ => Err(format!("unknown function {f:?}")),
     }
