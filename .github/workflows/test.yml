@@ -30,3 +30,6 @@ jobs:
       - run: node --check nero-workspaces/nero-workspaces@LudaLunizz/scrollSpeed.js
       - run: lua5.4 tests/test-scroll-plugin.lua
       - run: glib-compile-schemas --strict --dry-run nero-workspaces/nero-workspaces@LudaLunizz/schemas
+      - run: node --check taskbar/nero-argos-split@LudaLunizz/extension.js
+      - run: glib-compile-schemas --strict --dry-run taskbar/nero-argos-split@LudaLunizz/schemas
+      - run: bash -n taskbar/setup-taskbar.sh

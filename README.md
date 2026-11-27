@@ -1,7 +1,7 @@
 # Nero
 
 A window manager for GNOME: window placement tweaks for GNOME Shell (Wayland, GNOME 46–50), made for a
-multi-monitor desktop with portrait and small screens. Four parts:
+multi-monitor desktop with portrait and small screens. Five parts:
 
 1. **keep-onscreen**: a small standalone extension. New windows are shrunk and
    moved so they fit the monitor they open on (no more windows half off the edge).
@@ -11,6 +11,8 @@ multi-monitor desktop with portrait and small screens. Four parts:
    puts the windows back after the next login (after a shutdown, a crash or a log out).
 4. **nero-workspaces**: a standalone extension that gives every monitor its own workspaces:
    scroll on a monitor's panel (or press the workspace keys) and only that monitor switches.
+5. **taskbar**: a Windows-like taskbar setup: Dash to Panel at the bottom of every monitor,
+   a system monitor in it (Argos script), and the Argos buttons moved to another monitor if you want.
 
 The placement logic itself is **Rust** (`core/`), built to WebAssembly and run inside
 GNOME Shell by a small JS loader (`core/js/nero.js`). GNOME Shell only lets JavaScript
@@ -226,10 +228,50 @@ set org.gnome.shell.extensions.nero-workspaces KEY VALUE`):
 | `three-finger-swipe` | `true` | Three-finger swipe switches the monitor under the pointer only |
 | `touchpad-scroll-speed` | `100` | Two-finger scroll speed in % (0–100), from the next login |
 
+## 5. taskbar
+
+A Windows-like taskbar: one panel at the **bottom** of every monitor, the app grid button on the
+left, the clock, system menu and show-desktop button on the right, one icon per app with window
+previews on click. It is built from two extensions from extensions.gnome.org, which you install
+first: [Dash to Panel](https://extensions.gnome.org/extension/1160/dash-to-panel/) and
+[Argos](https://extensions.gnome.org/extension/1176/argos/). Then:
+
+```sh
+./taskbar/setup-taskbar.sh                  # taskbar at the bottom + the sysmon script
+./taskbar/setup-taskbar.sh --monitor DP-1   # same, and the Argos buttons on DP-1's taskbar
+./taskbar/setup-taskbar.sh --undo           # put back the Dash to Panel settings from before the last run
+```
+
+The script saves your current Dash to Panel settings to `~/.local/state/nero/` before it changes
+anything, and turns off Ubuntu's own dock (it would sit next to the taskbar).
+
+**sysmon** (`taskbar/argos/sysmon.1s.sh`, copied to `~/.config/argos/`, refreshes every second)
+shows, left to right: your Claude 5-hour and weekly usage as bars (green under 50 %, blue from
+50 %, red from 80 %; only when Claude Code is logged in on this account, fetched every 5 minutes
+in the background, needs `python3`), download and upload in MB/s, RAM use as a small bar, CPU
+temperature and load, GPU temperature and load (NVIDIA through `nvidia-smi`, AMD through sysfs).
+Click it for the details, a "Refresh usage" entry and a link to GNOME System Monitor.
+Its state lives in `$XDG_RUNTIME_DIR/argos-sysmon` (mode 700).
+
+**nero-argos-split@LudaLunizz** moves the Argos buttons out of the main panel (the taskbar on the
+primary monitor) into the taskbar of one other monitor. Pick the monitor by its connector name
+(`--monitor` above, or later):
+
+```sh
+gsettings --schemadir ~/.local/share/gnome-shell/extensions/nero-argos-split@LudaLunizz/schemas \
+  set org.gnome.shell.extensions.nero-argos-split monitor DP-1
+```
+
+Empty, the primary monitor or an unplugged one: the buttons stay in (or go back to) the main
+panel. When Dash to Panel rebuilds its panels, the buttons are taken home first and moved again
+within 2 seconds.
+Run only one extension that moves the Argos buttons: two of them pull the same buttons back and
+forth every 2 seconds.
+
 ## License
 
 Nero is MIT licensed (see `LICENSE`): the Rust core (`core/`), `nero-keep-onscreen`,
-`nero-layout`, `nero-workspaces` and the tests.
+`nero-layout`, `nero-workspaces`, `taskbar/` and the tests.
 
 The one exception is `tilingshell-patch/`. That patch is a derivative of
 [Tiling Shell](https://github.com/domferr/tilingshell) © Domenico Ferraro and stays

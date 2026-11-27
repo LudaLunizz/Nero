@@ -9,4 +9,5 @@ echo "== test-loader-version"; gjs -m test-loader-version.mjs
 echo "== test-registry"; gjs -m test-registry.mjs
 echo "== test-prompt-choices"; gjs -m test-prompt-choices.mjs
 echo "== test-build-check"; ./test-build-check.sh
+echo "== test-sysmon"; ./test-sysmon.sh
 echo "all tests passed"

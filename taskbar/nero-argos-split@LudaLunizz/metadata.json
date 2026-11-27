@@ -1,0 +1,9 @@
+{
+  "uuid": "nero-argos-split@LudaLunizz",
+  "name": "Nero Argos split",
+  "description": "Moves the Argos buttons out of the main panel into the Dash to Panel taskbar of one chosen monitor.",
+  "shell-version": ["46", "47", "48", "49", "50"],
+  "settings-schema": "org.gnome.shell.extensions.nero-argos-split",
+  "url": "https://github.com/LudaLunizz/Nero",
+  "version": 1
+}
