@@ -16,8 +16,11 @@ jobs:
         working-directory: core
         run: cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --locked
       - run: ./tilingshell-patch/apply.sh
-      - run: ./core/build.sh --check
+      # (core/build.sh --check here compared apply.sh's fresh copies with themselves;
+      # tests/test-build-check.sh in run.sh tests the check itself)
       - run: ./tests/run.sh
+      - name: syntax of every patched Tiling Shell file
+        run: find build/tilingshell@ferrarodomenico.com -name '*.js' -print0 | xargs -0 -n1 node --check
       - run: node --check core/js/helpers.js
       - run: node --check keep-onscreen/nero-keep-onscreen@LudaLunizz/extension.js
       - run: node --check keep-onscreen/nero-keep-onscreen@LudaLunizz/prefs.js

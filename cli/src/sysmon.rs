@@ -2,7 +2,6 @@
 //! the checks and the text are `nero_core::sysmon`.
 
 use nero_core::sysmon as sm;
-use nero_core::taskbar::shell_quote;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
@@ -159,7 +158,7 @@ fn panel(dir: &Path) {
         cpu_use,
         gpu_temp,
         gpu_use,
-        refresh_cmd: shell_quote(&exe),
+        refresh_cmd: sm::argos_bash(&exe),
         now: now_s,
     };
     let _ = std::io::stdout().write_all(sm::render(&snapshot).as_bytes());
@@ -214,6 +213,7 @@ fn gpu() -> (String, String) {
             .stderr(Stdio::null())
             .output()
             .ok()
+            .filter(|o| o.status.success())
             .and_then(|o| sm::parse_nvidia(&String::from_utf8_lossy(&o.stdout)))
             .unwrap_or_else(dash);
     }
@@ -225,7 +225,7 @@ fn gpu() -> (String, String) {
                 .find_map(|h| read(h.join("temp1_input")))
                 .and_then(|t| sm::milli_to_deg(&t))
                 .map_or("-".to_string(), |t| t.to_string());
-            return (temp, busy.trim().to_string());
+            return (temp, sm::number(&busy).unwrap_or_else(|| "-".into()));
         }
     }
     dash()
@@ -297,6 +297,8 @@ fn fetch() -> Result<String, Fail> {
     );
     let mut child = Command::new("curl")
         .args([
+            // first: no ~/.curlrc (a --verbose or --trace there would write the token out)
+            "-q",
             "--silent",
             "--show-error",
             "--proto",

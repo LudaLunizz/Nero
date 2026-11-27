@@ -3,6 +3,8 @@
 //! command (cli/) runs the programs (dconf, gsettings, gnome-extensions); what it
 //! runs, and in which order, is decided here and tested here.
 
+use serde::{Deserialize, Serialize};
+
 /// The extensions the setup works with.
 pub const DTP: &str = "dash-to-panel@jderose9.github.com";
 pub const ARGOS: &str = "argos@pew.worldwidemann.com";
@@ -89,6 +91,148 @@ pub fn latest_backup(names: &[String]) -> Option<&String> {
         .iter()
         .filter(|n| n.starts_with("dash-to-panel-") && n.ends_with(".dconf"))
         .max()
+}
+
+/// A `YYYYMMDD-HHMMSS` stamp (UTC) from seconds since 1970, for when date(1) can't
+/// be run. Same shape as the local one, so backups keep sorting by time.
+pub fn utc_stamp(secs: u64) -> String {
+    let (days, rem) = ((secs / 86400) as i64, secs % 86400);
+    // days to a civil date (Howard Hinnant's algorithm)
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}{m:02}{d:02}-{:02}{:02}{:02}",
+        rem / 3600,
+        rem / 60 % 60,
+        rem % 60
+    )
+}
+
+/// The file that records what a setup changed, so undo can put each thing back.
+/// It is written by the first setup and kept by later ones until an undo.
+pub const RECORD: &str = "taskbar-setup.json";
+
+/// What was there before the first `nero taskbar setup` (since the last undo).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Record {
+    /// The Dash to Panel dconf backup (a file name in the state folder).
+    pub dconf_backup: String,
+    pub dock_enabled: bool,
+    pub dtp_enabled: bool,
+    /// `None` while Argos was not installed at setup time.
+    pub argos_enabled: Option<bool>,
+    pub sysmon: SysmonBefore,
+    /// The split extension was put in by setup (not there before).
+    pub split_added: bool,
+}
+
+/// The Argos script `sysmon.1s.sh` before setup.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum SysmonBefore {
+    /// Setup did not write the script (Argos was not installed).
+    #[default]
+    Untouched,
+    /// There was no script: undo removes the wrapper.
+    Absent,
+    /// There was the wrapper already: nothing to put back.
+    Wrapper,
+    /// Another script, saved under this file name in the state folder.
+    Saved(String),
+}
+
+/// What a setup run found, before it changes anything.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Found {
+    pub dock_enabled: bool,
+    pub dtp_enabled: bool,
+    pub argos_enabled: Option<bool>,
+}
+
+/// The record after this setup run. A record of an earlier setup (no undo since)
+/// keeps what it saw first: that is the state undo goes back to. Only what the
+/// earlier run did not touch is filled in now.
+pub fn merge_record(old: Option<Record>, found: &Found, dconf_backup: &str) -> Record {
+    match old {
+        None => Record {
+            dconf_backup: dconf_backup.to_string(),
+            dock_enabled: found.dock_enabled,
+            dtp_enabled: found.dtp_enabled,
+            argos_enabled: found.argos_enabled,
+            sysmon: SysmonBefore::Untouched,
+            split_added: false,
+        },
+        Some(mut r) => {
+            if r.argos_enabled.is_none() {
+                r.argos_enabled = found.argos_enabled;
+            }
+            r
+        }
+    }
+}
+
+/// The record once the sysmon script was looked at (`before` = what was there).
+pub fn note_sysmon(r: &mut Record, before: SysmonBefore) {
+    if r.sysmon == SysmonBefore::Untouched {
+        r.sysmon = before;
+    }
+}
+
+/// The record once the split extension is about to be written.
+pub fn note_split(r: &mut Record, present_before: bool) {
+    if !present_before {
+        r.split_added = true;
+    }
+}
+
+/// One step of an undo, in order.
+#[derive(Clone, Debug, PartialEq)]
+pub enum UndoStep {
+    LoadDconf(String),
+    Enable(&'static str),
+    Disable(&'static str),
+    /// Put the saved script back.
+    RestoreSysmon(String),
+    /// Remove the wrapper (there was no script before).
+    RemoveSysmon,
+    /// Disable and remove the split extension.
+    RemoveSplit,
+}
+
+/// The steps that put back what `r` recorded.
+pub fn undo_steps(r: &Record) -> Vec<UndoStep> {
+    let mut v = vec![UndoStep::LoadDconf(r.dconf_backup.clone())];
+    if r.split_added {
+        v.push(UndoStep::RemoveSplit);
+    }
+    match &r.sysmon {
+        SysmonBefore::Saved(f) => v.push(UndoStep::RestoreSysmon(f.clone())),
+        SysmonBefore::Absent => v.push(UndoStep::RemoveSysmon),
+        SysmonBefore::Untouched | SysmonBefore::Wrapper => {}
+    }
+    if r.argos_enabled == Some(false) {
+        v.push(UndoStep::Disable(ARGOS));
+    }
+    if !r.dtp_enabled {
+        v.push(UndoStep::Disable(DTP));
+    }
+    if r.dock_enabled {
+        v.push(UndoStep::Enable(UBUNTU_DOCK));
+    }
+    v
+}
+
+/// Whether `gnome-extensions info` (run with LC_ALL=C) says the extension is enabled.
+pub fn info_enabled(info: &str) -> bool {
+    info.lines()
+        .find_map(|l| l.trim_start().strip_prefix("Enabled:"))
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("yes"))
 }
 
 /// The folder of an extension from `gnome-extensions info` (its `Path:` line).
@@ -192,6 +336,103 @@ mod tests {
             backup_name("20261127-013000"),
             "dash-to-panel-20261127-013000.dconf"
         );
+    }
+
+    #[test]
+    fn utc_stamps() {
+        assert_eq!(utc_stamp(0), "19700101-000000");
+        assert_eq!(utc_stamp(1_795_826_096), "20261128-003456");
+        assert_eq!(utc_stamp(951_782_400), "20000229-000000");
+        // the fallback sorts with the date(1) ones
+        let names = a(&[
+            &backup_name("20261126-090000"),
+            &backup_name(&utc_stamp(1_795_826_096)),
+        ]);
+        assert_eq!(latest_backup(&names).unwrap(), &names[1]);
+    }
+
+    fn found(dock: bool, dtp: bool, argos: Option<bool>) -> Found {
+        Found {
+            dock_enabled: dock,
+            dtp_enabled: dtp,
+            argos_enabled: argos,
+        }
+    }
+
+    #[test]
+    fn a_second_setup_keeps_the_first_record() {
+        let mut first = merge_record(None, &found(true, false, None), "dash-to-panel-1.dconf");
+        note_sysmon(&mut first, SysmonBefore::Saved("sysmon.1s.sh.1.bak".into()));
+        // second run: the dock is now off, DtP on, the script is the wrapper, Argos now there
+        let mut second = merge_record(
+            Some(first.clone()),
+            &found(false, true, Some(true)),
+            "dash-to-panel-2.dconf",
+        );
+        note_sysmon(&mut second, SysmonBefore::Wrapper);
+        note_split(&mut second, false);
+        assert_eq!(second.dconf_backup, "dash-to-panel-1.dconf");
+        assert!(second.dock_enabled && !second.dtp_enabled);
+        assert_eq!(
+            second.sysmon,
+            SysmonBefore::Saved("sysmon.1s.sh.1.bak".into())
+        );
+        assert_eq!(second.argos_enabled, Some(true));
+        assert!(second.split_added);
+        // a split that was there before setup is never removed
+        let mut r = merge_record(None, &found(false, true, None), "x.dconf");
+        note_split(&mut r, true);
+        assert!(!r.split_added);
+    }
+
+    #[test]
+    fn undo_puts_back_each_thing() {
+        let r = Record {
+            dconf_backup: "dash-to-panel-1.dconf".into(),
+            dock_enabled: true,
+            dtp_enabled: false,
+            argos_enabled: Some(false),
+            sysmon: SysmonBefore::Saved("s.bak".into()),
+            split_added: true,
+        };
+        assert_eq!(
+            undo_steps(&r),
+            [
+                UndoStep::LoadDconf("dash-to-panel-1.dconf".into()),
+                UndoStep::RemoveSplit,
+                UndoStep::RestoreSysmon("s.bak".into()),
+                UndoStep::Disable(ARGOS),
+                UndoStep::Disable(DTP),
+                UndoStep::Enable(UBUNTU_DOCK),
+            ]
+        );
+        // everything was already as setup leaves it: only the settings go back
+        let r = Record {
+            dconf_backup: "b.dconf".into(),
+            dtp_enabled: true,
+            argos_enabled: Some(true),
+            sysmon: SysmonBefore::Wrapper,
+            ..Record::default()
+        };
+        assert_eq!(undo_steps(&r), [UndoStep::LoadDconf("b.dconf".into())]);
+        let r = Record {
+            sysmon: SysmonBefore::Absent,
+            dtp_enabled: true,
+            ..Record::default()
+        };
+        assert!(undo_steps(&r).contains(&UndoStep::RemoveSysmon));
+        // the record survives a round trip through its file
+        let json = serde_json::to_string(&r).unwrap();
+        assert_eq!(serde_json::from_str::<Record>(&json).unwrap(), r);
+    }
+
+    #[test]
+    fn enabled_line() {
+        assert!(info_enabled(
+            "x\n  Path: /p\n  Enabled: Yes\n  State: ACTIVE\n"
+        ));
+        assert!(!info_enabled("x\n  Enabled: No\n"));
+        assert!(!info_enabled("x\n  State: ACTIVE\n"));
     }
 
     #[test]

@@ -192,7 +192,7 @@ pub fn file_text(windows: &[Entry], saved_at: &str) -> String {
 /// Seconds since this process started, from `/proc/self/stat` and
 /// `/proc/uptime` (clock ticks taken as 100 per second, as on Linux).
 pub fn process_uptime(stat: &str, uptime: &str) -> Option<f64> {
-    let rest = &stat[stat.rfind(')')? + 2..];
+    let rest = stat.get(stat.rfind(')')? + 2..)?;
     // after the name: state is field 3, starttime field 22 -> index 19 here
     let start_ticks: f64 = rest.split(' ').nth(19)?.parse().ok()?;
     let up: f64 = uptime.split(' ').next()?.trim().parse().ok()?;
@@ -314,6 +314,15 @@ pub struct SaveOut {
     pub write: Option<String>,
 }
 
+/// Drop the claimed ids of windows that are gone (`ids` = every window now), so
+/// the model does not grow over a long session. Without `ids`: unchanged.
+pub fn forget_gone(mut model: Model, ids: Option<&[u64]>) -> Model {
+    if let Some(ids) = ids {
+        model.claimed.retain(|id| ids.contains(id));
+    }
+    model
+}
+
 /// A periodic save (or a forced one: save-now). Nothing is written while a
 /// restore runs, or when nothing changed. When there are fewer windows than last
 /// time, the session may be ending and apps closing, so the smaller list is only
@@ -331,6 +340,8 @@ pub fn save(
     let windows = snapshot(wins, opts);
     let text = canonical(&windows);
     if model.last_written.as_deref() == Some(text.as_str()) {
+        // back to what is on disk: a shrink seen before no longer counts as seen
+        model.pending_shrink = None;
         return SaveOut { model, write: None };
     }
     if !force
@@ -473,6 +484,10 @@ pub fn claim(mut model: Model, w: &ClaimWin) -> ClaimOut {
     let Some(i) = layout::match_window(&saved, &r.used, app, &w.snap.title) else {
         return none(model);
     };
+    // a model from JS with a short `used` list must not trap
+    if r.used.len() < r.saved.len() {
+        r.used.resize(r.saved.len(), false);
+    }
     r.used[i] = true;
     r.placed.push((w.id, i));
     let run = r.run;
@@ -566,7 +581,7 @@ pub fn place(model: &Model, facts: &PlaceFacts, run: Option<u64>) -> Vec<Action>
         if !w.on_all {
             out.push(Action::Stick);
         }
-    } else if e.workspace >= 0 {
+    } else if e.workspace >= 0 && facts.n_workspaces > 0 {
         // with dynamic workspaces the last one is empty; filling it adds the next
         let idx = e.workspace.min(facts.n_workspaces - 1);
         if w.workspace != Some(idx) {
@@ -883,6 +898,12 @@ mod tests {
         assert!(o2.write.is_some());
         // forced: at once
         assert!(save(m.clone(), one, &opts, true, "t5").write.is_some());
+        // shrink seen, back to the written list, then the same shrink again: that
+        // is a first sighting again, not the second
+        let o1 = save(m.clone(), one, &opts, false, "t7");
+        let back = save(o1.model, &two, &opts, false, "t8");
+        assert_eq!(back.write, None);
+        assert_eq!(save(back.model, one, &opts, false, "t9").write, None);
         // a file read at start counts as written
         let started = start(Some(&text));
         assert!(started.has_saved);
@@ -917,6 +938,9 @@ mod tests {
         // a name with spaces and brackets
         let odd = "1 (a) b) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 100 21";
         assert_eq!(process_uptime(odd, "2 0"), Some(1.0));
+        // cut off right after the name, or a multi-byte char after it: no panic
+        assert_eq!(process_uptime("1 (gnome-shell)", "2 0"), None);
+        assert_eq!(process_uptime("1 (x)é", "2 0"), None);
     }
 
     fn restoring(entries: &[Entry]) -> Model {
@@ -960,6 +984,18 @@ mod tests {
         assert_eq!(
             claim(c2.model.clone(), &claim_win(9, "b.desktop", "x")).run,
             None
+        );
+        // a short `used` list from JS does not trap
+        let mut short = c2.model.clone();
+        short.restore.as_mut().unwrap().used.clear();
+        short.claimed.clear();
+        assert!(claim(short, &claim_win(10, "b.desktop", "x")).run.is_some());
+        // closed windows leave `claimed` at the next save
+        let kept = forget_gone(c2.model.clone(), Some(&[8]));
+        assert_eq!(kept.claimed.iter().copied().collect::<Vec<_>>(), [8]);
+        assert_eq!(
+            forget_gone(c2.model.clone(), None).claimed,
+            c2.model.claimed
         );
         // a restore-now frees the claimed windows
         let again = restore_start(c2.model, Some(&file(&entries)), &[], true);

@@ -254,7 +254,8 @@ pub fn usage_from_response(body: &str, now: i64) -> Result<String, String> {
             .and_then(Value::as_str)
             .filter(|r| !r.is_empty())
             .unwrap_or("-")
-            .to_string();
+            // the state line is split on spaces: one field
+            .replace(char::is_whitespace, "T");
         (s, r)
     };
     let (s, sr) = get("five_hour");
@@ -370,13 +371,30 @@ pub fn ram_bar(pct: i64) -> &'static str {
 }
 
 /// A "temp, use" pair from `nvidia-smi --format=csv,noheader,nounits`.
+/// Only the first GPU is shown; anything that is not a number (an error text when
+/// the driver is not loaded) gives None.
 pub fn parse_nvidia(text: &str) -> Option<(String, String)> {
     let mut f = text
         .lines()
         .next()?
         .split([',', ' '])
         .filter(|s| !s.is_empty());
-    Some((f.next()?.to_string(), f.next()?.to_string()))
+    let (t, u) = (f.next()?, f.next()?);
+    Some((number(t)?, number(u)?))
+}
+
+/// A whole number as text (it goes into Pango markup), or None.
+pub fn number(s: &str) -> Option<String> {
+    let s = s.trim();
+    (!s.is_empty() && s.len() <= 6 && s.bytes().all(|b| b.is_ascii_digit())).then(|| s.to_string())
+}
+
+/// The `bash=` value of an Argos line for the program at `exe`. Argos splits the
+/// line with GLib.shell_parse_argv (one level of quotes off) and then runs the
+/// value with `bash -c` (a second level), so the path is quoted twice.
+pub fn argos_bash(exe: &str) -> String {
+    let q = crate::taskbar::shell_quote(exe);
+    crate::taskbar::shell_quote(&q)
 }
 
 /// Hardware monitor names that carry the CPU's temperature.
@@ -689,6 +707,24 @@ mod tests {
     fn gpu_and_temps() {
         assert_eq!(parse_nvidia("45, 12\n"), Some(("45".into(), "12".into())));
         assert_eq!(parse_nvidia(""), None);
+        // driver not loaded: the error text is not a temperature
+        assert_eq!(
+            parse_nvidia("NVIDIA-SMI has failed because it couldn't communicate\n"),
+            None
+        );
+        // two GPUs: the first
+        assert_eq!(
+            parse_nvidia("45, 12\n60, 99\n"),
+            Some(("45".into(), "12".into()))
+        );
+        assert_eq!(number(" 7\n"), Some("7".into()));
+        assert_eq!(number("<b>"), None);
+        assert_eq!(
+            argos_bash("/home/u/.local/bin/nero"),
+            "/home/u/.local/bin/nero"
+        );
+        // after shell_parse_argv: '/my dir/nero' for bash
+        assert_eq!(argos_bash("/my dir/nero"), r"''\''/my dir/nero'\'''");
         assert!(is_cpu_hwmon("k10temp\n") && !is_cpu_hwmon("nvme"));
         assert_eq!(
             (milli_to_deg("45500\n"), milli_to_deg("x")),

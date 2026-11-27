@@ -135,17 +135,31 @@ fn fake_tools(home: &Path, argos_installed: bool, dtp_installed: bool) -> PathBu
         &format!(
             "case \"$1 $2\" in\n\
              'info dash-to-panel@jderose9.github.com') [ {dtp_installed} = true ] && echo \"  Path: {}\" || exit 1;;\n\
-             'info argos@pew.worldwidemann.com') [ {argos_installed} = true ] || exit 1;;\n\
+             'info argos@pew.worldwidemann.com') [ {argos_installed} = true ] && echo '  Enabled: No' || exit 1;;\n\
+             'info ubuntu-dock@ubuntu.com') echo '  Enabled: Yes';;\n\
              'enable nero-argos-split@LudaLunizz') exit 1;;\n\
              esac\nexit 0",
             dtp.display()
         ),
     );
+    // a dconf that keeps the Dash to Panel settings in a file (TOP until changed)
+    let db = home.join("dconf-db");
+    fs::write(&db, "[/]\npanel-position='TOP'\n").unwrap();
     script(
         "dconf",
-        "case \"$1\" in dump) echo '[/]'; echo \"panel-position='TOP'\";; esac",
+        &format!(
+            "case \"$1\" in dump) cat \"{0}\";; reset) : > \"{0}\";; load) cat > \"{0}\";; esac",
+            db.display()
+        ),
     );
-    script("gsettings", "exit 0");
+    // gsettings set panel-position writes into that file
+    script(
+        "gsettings",
+        &format!(
+            "case \"$*\" in *' panel-position BOTTOM') printf \"[/]\\npanel-position='BOTTOM'\\n\" > \"{}\";; esac; exit 0",
+            db.display()
+        ),
+    );
     script("glib-compile-schemas", "exit 0");
     bin
 }
@@ -276,12 +290,47 @@ fn taskbar_setup_and_undo() {
         stdout(&o)
     );
 
-    // undo puts the newest backup back
-    let o = nero(&home, Some(&bin), &["taskbar", "undo"]);
+    let db = home.join("dconf-db");
+    assert!(fs::read_to_string(&db).unwrap().contains("BOTTOM"));
+
+    // a second setup before an undo keeps the first backup and record
+    fs::write(home.join("calls.log"), "").unwrap();
+    let o = nero(&home, Some(&bin), &["taskbar", "setup"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(stdout(&o).contains("keeping the settings saved by that first run"));
+    assert!(!calls(&home).iter().any(|l| l.starts_with("dconf dump")));
+
+    // undo puts back what was there before the first setup
+    fs::write(home.join("calls.log"), "").unwrap();
+    let o = nero(&home, Some(&bin), &["taskbar", "undo"]);
+    assert!(
+        o.status.success(),
+        "{} {}",
+        stdout(&o),
+        String::from_utf8_lossy(&o.stderr)
+    );
     let c = calls(&home);
     assert!(c.contains(&"dconf reset -f /org/gnome/shell/extensions/dash-to-panel/".to_string()));
     assert!(c.contains(&"dconf load /org/gnome/shell/extensions/dash-to-panel/".to_string()));
+    assert!(
+        fs::read_to_string(&db)
+            .unwrap()
+            .contains("panel-position='TOP'")
+    );
+    assert_eq!(
+        fs::read_to_string(home.join(".config/argos/sysmon.1s.sh")).unwrap(),
+        "#!/bin/bash\necho old\n"
+    );
+    assert!(!ext.exists());
+    assert!(c.contains(&"gnome-extensions disable nero-argos-split@LudaLunizz".to_string()));
+    assert!(c.contains(&"gnome-extensions enable ubuntu-dock@ubuntu.com".to_string()));
+    assert!(c.contains(&"gnome-extensions disable argos@pew.worldwidemann.com".to_string()));
+    // Dash to Panel was not enabled before (the fake says no Enabled line)
+    assert!(c.contains(&"gnome-extensions disable dash-to-panel@jderose9.github.com".to_string()));
+    assert!(!home.join("state/nero/taskbar-setup.json").exists());
+    // a second undo has only the old backups to go on: Dash to Panel only
+    let o = nero(&home, Some(&bin), &["taskbar", "undo"]);
+    assert!(o.status.success());
     let _ = fs::remove_dir_all(&home);
 }
 

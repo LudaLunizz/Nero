@@ -107,6 +107,32 @@ fn grow_into_free_space_cases() {
 }
 
 #[test]
+fn open_space_stops_at_an_edge_in_the_pointer_column() {
+    let area = r(0.0, 0.0, 1000.0, 1000.0);
+    let win = r(500.0, 0.0, 500.0, 400.0);
+    let p = |x, y| Point { x, y };
+    // pointer below the window, exactly on its left edge's column
+    let free = open_space_at(p(500.0, 600.0), &[win], &area);
+    assert_eq!(free, r(0.0, 400.0, 1000.0, 600.0));
+    assert!(
+        !(free.x < win.right()
+            && free.right() > win.x
+            && free.y < win.bottom()
+            && free.bottom() > win.y)
+    );
+    // the same on the row: pointer right of a window, on its top edge's row
+    let win = r(0.0, 500.0, 400.0, 500.0);
+    let free = open_space_at(p(600.0, 500.0), &[win], &area);
+    assert!(
+        !(free.x < win.right()
+            && free.right() > win.x
+            && free.y < win.bottom()
+            && free.bottom() > win.y),
+        "{free:?}"
+    );
+}
+
+#[test]
 fn fluid() {
     let area = r(0.0, 0.0, 1000.0, 600.0);
     let tiles = [
@@ -276,6 +302,9 @@ fn json_boundary() {
     assert!(abi::call(b"not json").starts_with(r#"{"err":"bad request"#));
     // a chain pointing at a tile that does not exist is an error, not a panic
     let bad = br#"{"f":"toggleChain","a":[[],{"vertical":true,"c":0.5,"from":0,"to":1,"segments":[{"prev":[3],"next":[],"from":0,"to":1}]}]}"#;
+    assert!(abi::call(bad).starts_with(r#"{"err":"#));
+    // the same for isAttached (a tile index past the end used to trap the wasm)
+    let bad = br#"{"f":"isAttached","a":[[{"x":0,"y":0,"width":1,"height":1,"groups":[]}],{"vertical":true,"c":0.5,"from":0,"to":1,"segments":[{"prev":[5],"next":[],"from":0,"to":1}]}]}"#;
     assert!(abi::call(bad).starts_with(r#"{"err":"#));
 }
 

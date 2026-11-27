@@ -58,7 +58,8 @@ const unmaximize = w => w.get_maximized ? w.unmaximize(Meta.MaximizeFlags.BOTH) 
 let nextId = 1;
 const idOf = w => (w._neroLayoutId ??= nextId++);
 const windowById = id => global.display.list_all_windows().find(w => w._neroLayoutId === id) ?? null;
-const live = w => !!w.get_compositor_private();
+// shown, and not being closed (its actor stays during the close animation)
+const live = w => !!w.get_compositor_private() && !w._neroLayoutGone;
 
 // The desktop file id of a window's app (null for apps without a desktop file).
 function appIdOf(w) {
@@ -135,6 +136,22 @@ export default class NeroLayout extends Extension {
         this._reg = new Registry(); // everything below that lives as long as the extension
         this._restoreReg = null; // the window-created hook of a running restore
         this._wait = null; // a Registry while waiting for nero-workspaces
+        this._watched = new WeakSet(); // windows with an 'unmanaging' handler (_watchGone)
+        // GNOME Shell does not call disable() when enable() throws: undo it here,
+        // or the save timer and the settings handlers would stay connected.
+        try {
+            this._enable();
+        } catch (e) {
+            try {
+                this.disable();
+            } catch (e2) {
+                logError(e2, '[nero-layout] undo after a failed enable');
+            }
+            throw e;
+        }
+    }
+
+    _enable() {
         const file = this._loadText();
         const start = call('lyStart', file);
         this._model = start.model; // the core's state (core/src/layout_model.rs Model), opaque here
@@ -169,9 +186,17 @@ export default class NeroLayout extends Extension {
     }
 
     disable() {
+        // the rest runs also when the core call throws (a broken wasm): no timer or
+        // handler may outlive the extension
+        try {
+            this._endRestore(null);
+        } catch (e) {
+            logError(e, '[nero-layout] ending the restore');
+        }
         this._stopWaiting();
-        this._endRestore(null);
-        this._reg.destroy();
+        this._restoreReg?.destroy();
+        this._restoreReg = null;
+        this._reg?.destroy();
         this._reg = null;
         this._saveTimer = 0;
         this._model = null;
@@ -239,7 +264,7 @@ export default class NeroLayout extends Extension {
         let out;
         try {
             const wins = global.display.sort_windows_by_stacking(global.display.list_all_windows()); // bottom first
-            out = call('lySave', this._model, wins.map(snapWin), this._snapOpts(), force, new Date().toISOString());
+            out = call('lySave', this._model, wins.map(snapWin), this._snapOpts(), force, new Date().toISOString(), wins.map(idOf));
         } catch (e) {
             log(`snapshot failed: ${e.message}`);
             return;
@@ -285,6 +310,7 @@ export default class NeroLayout extends Extension {
                 return;
             const id = hooks.connect(actor, 'first-frame', () => {
                 hooks.disconnect(actor, id);
+                this._watchGone(w);
                 // after keep-onscreen's fit, and once the title has settled
                 this._later(400, () => this._claim(w));
             });
@@ -292,6 +318,18 @@ export default class NeroLayout extends Extension {
         if (this._settings.get_boolean('launch-apps'))
             this._later(this._settings.get_uint('launch-delay') * 1000, () => this._launchMissing(run));
         this._later(this._settings.get_uint('restore-seconds') * 1000, () => this._endRestore(run));
+    }
+
+    // Marks w as gone when it starts closing, so a timeout that still holds it
+    // does not move a window that is being unmanaged. Once per window.
+    _watchGone(w) {
+        if (!this._reg || this._watched.has(w))
+            return;
+        this._watched.add(w);
+        const id = this._reg.connect(w, 'unmanaging', () => {
+            w._neroLayoutGone = true;
+            this._reg?.disconnect(w, id);
+        });
     }
 
     // run: only if that restore is still the current one; null: whatever runs.
@@ -326,6 +364,7 @@ export default class NeroLayout extends Extension {
         // slow clients (XWayland, Electron) may still resize or raise themselves: once more
         // (the core does nothing if a newer restore has started meanwhile)
         const run = out.run;
+        this._watchGone(w);
         this._later(1200, () => {
             this._place(w, run);
             this._restack(id);

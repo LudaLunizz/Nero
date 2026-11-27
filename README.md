@@ -211,7 +211,7 @@ extensions.gnome.org first, then:
 cargo install --path cli --locked
 nero taskbar setup                        # taskbar at the bottom + system monitor
 nero taskbar setup --monitor DP-1         # same, Argos buttons on DP-1
-nero taskbar undo                         # restore your previous Dash to Panel settings
+nero taskbar undo                         # put back what setup changed (settings, dock, script)
 ```
 
 </details>
