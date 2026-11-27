@@ -9,8 +9,8 @@
 //! bytes at the returned pointer. The answer stays valid until the next call.
 
 use crate::{
-    Point, Rect, fit, free_space as fs, layout, line_groups as lg, resize, touchpad as tp,
-    ws_model as wm,
+    Point, Rect, fit, free_space as fs, layout_model as lm, line_groups as lg, resize,
+    touchpad as tp, ws_model as wm,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -175,20 +175,6 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
             &arg(a, 0, "frame")?,
             &arg(a, 1, "workArea")?,
         )),
-        "toSpot" => ok(layout::to_spot(
-            &arg(a, 0, "frame")?,
-            &arg(a, 1, "workArea")?,
-        )),
-        "fromSpot" => ok(layout::from_spot(
-            &arg(a, 0, "spot")?,
-            &arg(a, 1, "workArea")?,
-        )),
-        "matchWindow" => ok(layout::match_window(
-            &arg::<Vec<layout::Saved>>(a, 0, "saved")?,
-            &arg::<Vec<bool>>(a, 1, "used")?,
-            &arg::<String>(a, 2, "app")?,
-            &arg::<String>(a, 3, "title")?,
-        )),
         "wsInit" => ok(wm::start(
             opt::<Option<String>>(a, 0, "saved", None)?.as_deref(),
             arg(a, 1, "config")?,
@@ -274,9 +260,46 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
             arg(a, 2, "endProgress")?,
         )),
         "scrollPlugin" => ok(tp::scroll_plugin(arg(a, 0, "percent")?)),
-        "restackOrder" => ok(layout::restack_order(
-            &arg::<Vec<layout::Placed>>(a, 0, "placed")?,
-            arg(a, 1, "newIndex")?,
+        "lyStart" => ok(lm::start(
+            opt::<Option<String>>(a, 0, "file", None)?.as_deref(),
+        )),
+        "lyAtLogin" => ok(lm::at_login(
+            arg(a, 0, "doneBefore")?,
+            arg(a, 1, "startingUp")?,
+            opt::<Option<String>>(a, 2, "stat", None)?.as_deref(),
+            opt::<Option<String>>(a, 3, "uptime", None)?.as_deref(),
+        )),
+        "lySave" => ok(lm::save(
+            arg(a, 0, "model")?,
+            &arg::<Vec<lm::SnapWin>>(a, 1, "windows")?,
+            &arg(a, 2, "opts")?,
+            arg(a, 3, "force")?,
+            &arg::<String>(a, 4, "now")?,
+        )),
+        "lyRestoreStart" => ok(lm::restore_start(
+            arg(a, 0, "model")?,
+            opt::<Option<String>>(a, 1, "file", None)?.as_deref(),
+            &arg::<Vec<String>>(a, 2, "skip")?,
+            arg(a, 3, "manual")?,
+        )),
+        "lyRestoreEnd" => ok(lm::end(arg(a, 0, "model")?, opt(a, 1, "run", None)?)),
+        "lyClaim" => ok(lm::claim(arg(a, 0, "model")?, &arg(a, 1, "window")?)),
+        "lyPlace" => ok(lm::place(
+            &arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            opt(a, 2, "run", None)?,
+        )),
+        "lyRestack" => ok(lm::restack(
+            &arg(a, 0, "model")?,
+            &arg::<Vec<lm::StackWin>>(a, 1, "windows")?,
+            arg(a, 2, "id")?,
+        )),
+        "lyMissingApps" => ok(lm::missing_apps(&arg(a, 0, "model")?)),
+        "lyLaunchPlan" => ok(lm::launch_plan(
+            &arg(a, 0, "model")?,
+            arg(a, 1, "run")?,
+            &arg::<Vec<lm::AppInfo>>(a, 2, "apps")?,
+            &arg::<Vec<lm::AutostartEntry>>(a, 3, "autostart")?,
         )),
         _ => Err(format!("unknown function {f:?}")),
     }

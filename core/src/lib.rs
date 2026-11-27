@@ -11,6 +11,7 @@ pub mod abi;
 pub mod fit;
 pub mod free_space;
 pub mod layout;
+pub mod layout_model;
 pub mod line_groups;
 pub mod resize;
 pub mod touchpad;

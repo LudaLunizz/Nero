@@ -349,25 +349,45 @@ fn json_boundary() {
 
 #[test]
 fn layout_through_the_json_boundary() {
-    assert_eq!(
-        abi::call(br#"{"f":"toSpot","a":[{"x":1380,"y":1200,"width":1280,"height":696},{"x":1080,"y":1120,"width":2560,"height":1392}]}"#),
-        r#"{"ok":{"fx":0.1172,"fy":0.0575,"fw":0.5,"fh":0.5}}"#
-    );
-    assert_eq!(
-        abi::call(br#"{"f":"fromSpot","a":[{"fx":0.9,"fy":0,"fw":0.5,"fh":0.5},{"x":0,"y":0,"width":1000,"height":800}]}"#),
-        r#"{"ok":{"x":500.0,"y":0.0,"width":500.0,"height":400.0}}"#
-    );
-    assert_eq!(
-        abi::call(br#"{"f":"matchWindow","a":[[{"app":"a.desktop","title":"One"},{"app":"a.desktop","title":"Two"}],[false,false],"a.desktop","Two"]}"#),
-        r#"{"ok":1}"#
-    );
-    assert_eq!(
-        abi::call(br#"{"f":"matchWindow","a":[[{"app":"a.desktop","title":"One"}],[true],"a.desktop","One"]}"#),
-        r#"{"ok":null}"#
-    );
+    // the same JSON shapes nero-layout/extension.js sends
+    let win = r#"{"app":"a.desktop","normal":true,"skipTaskbar":false,"transient":false,"title":"Two","monitor":0,"connector":"DP-1","frame":{"x":1380,"y":1200,"width":1280,"height":696},"workArea":{"x":1080,"y":1120,"width":2560,"height":1392},"onAll":false,"workspace":0,"maximized":false,"fullscreen":false,"minimized":false,"above":false}"#;
+    let ok = |req: String| -> serde_json::Value {
+        let out: serde_json::Value = serde_json::from_str(&abi::call(req.as_bytes())).unwrap();
+        out.get("ok").unwrap_or_else(|| panic!("{out}")).clone()
+    };
+    let save = ok(format!(
+        r#"{{"f":"lySave","a":[{{}},[{win}],{{"skip":[],"onlyOnPrimary":false,"primary":0}},false,"now"]}}"#
+    ));
+    let file = save["write"].as_str().unwrap().to_string();
     assert!(
-        abi::call(br#"{"f":"matchWindow","a":[[],[],5,""]}"#)
-            .starts_with(r#"{"err":"argument 2 (app)"#)
+        file.contains(r#""spot": {"#) && file.contains(r#""fx": 0.1172"#),
+        "{file}"
+    );
+    let start = ok(format!(
+        r#"{{"f":"lyStart","a":[{}]}}"#,
+        serde_json::to_string(&file).unwrap()
+    ));
+    assert_eq!(start["hasSaved"], true);
+    let restore = ok(format!(
+        r#"{{"f":"lyRestoreStart","a":[{},{},[],false]}}"#,
+        start["model"],
+        serde_json::to_string(&file).unwrap()
+    ));
+    assert_eq!(restore["run"], 1);
+    // ClaimWin is the snapshot fields plus id and live, flat
+    let w: serde_json::Value = serde_json::from_str(win).unwrap();
+    let mut claim_win = w.as_object().unwrap().clone();
+    claim_win.insert("id".into(), 4294967297u64.into());
+    claim_win.insert("live".into(), true.into());
+    let claimed = ok(format!(
+        r#"{{"f":"lyClaim","a":[{},{}]}}"#,
+        restore["model"],
+        serde_json::Value::Object(claim_win)
+    ));
+    assert_eq!(claimed["run"], 1);
+    assert!(
+        abi::call(br#"{"f":"lyClaim","a":[{},{"id":1}]}"#)
+            .starts_with(r#"{"err":"argument 1 (window)"#)
     );
 }
 

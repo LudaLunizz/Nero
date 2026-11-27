@@ -22,7 +22,8 @@ a Rust panic becomes a JS exception and cannot take the shell down.
 
 The goal is Nero in Rust as far as GNOME allows: every decision and every piece of
 state in the core, with the JS only passing events in and carrying out what comes back.
-`nero-workspaces` is there already: its whole state machine is `core/src/ws_model.rs`.
+`nero-workspaces` and `nero-layout` are there already: their state machines are
+`core/src/ws_model.rs` and `core/src/layout_model.rs`.
 
 ## 0. Build the Rust core
 
