@@ -1,6 +1,6 @@
 diff -ruN a/components/editor/layoutEditor.js b/components/editor/layoutEditor.js
 --- a/components/editor/layoutEditor.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/editor/layoutEditor.js	2026-11-27 16:58:58.306983994 +0100
++++ b/components/editor/layoutEditor.js	2026-11-27 17:31:53.500261590 +0100
 @@ -1,5 +1,5 @@
  import { registerGObjectClass } from "../../utils/gjs.js";
 -import { GObject, St, Clutter, Shell } from "../../gi/ext.js";
@@ -129,7 +129,7 @@ diff -ruN a/components/editor/layoutEditor.js b/components/editor/layoutEditor.j
      this._sliders = [];
 diff -ruN a/components/layout/lineGroups.js b/components/layout/lineGroups.js
 --- a/components/layout/lineGroups.js	1970-01-01 01:00:00.000000000 +0100
-+++ b/components/layout/lineGroups.js	2026-11-27 16:58:58.307056444 +0100
++++ b/components/layout/lineGroups.js	2026-11-27 17:31:53.500305640 +0100
 @@ -0,0 +1,60 @@
 +// Local patch (2026-11-18): line groups for the layout editor. A "line" is one
 +// tile edge shared by tiles on both sides; tiles sharing a group id belong to
@@ -193,7 +193,7 @@ diff -ruN a/components/layout/lineGroups.js b/components/layout/lineGroups.js
 +}
 diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tilePreview.js
 --- a/components/tilepreview/tilePreview.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilepreview/tilePreview.js	2026-11-27 16:58:58.307819917 +0100
++++ b/components/tilepreview/tilePreview.js	2026-11-27 17:31:53.500901265 +0100
 @@ -87,20 +87,23 @@
      this._showing = true;
      this.show();
@@ -224,7 +224,7 @@ diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tileP
        });
 diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/resizeManager.js
 --- a/components/tilingsystem/resizeManager.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilingsystem/resizeManager.js	2026-11-27 16:58:58.307890386 +0100
++++ b/components/tilingsystem/resizeManager.js	2026-11-27 17:31:53.500951674 +0100
 @@ -1,12 +1,26 @@
 -import { St, Meta } from "../../gi/ext.js";
 +import { St, Meta, Clutter, GLib } from "../../gi/ext.js";
@@ -573,7 +573,7 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
  
 diff -ruN a/components/tilingsystem/tilingLayout.js b/components/tilingsystem/tilingLayout.js
 --- a/components/tilingsystem/tilingLayout.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilingsystem/tilingLayout.js	2026-11-27 16:58:58.308072275 +0100
++++ b/components/tilingsystem/tilingLayout.js	2026-11-27 17:31:53.501058413 +0100
 @@ -93,7 +93,8 @@
      this.ease({
        x: this.x,
@@ -586,24 +586,16 @@ diff -ruN a/components/tilingsystem/tilingLayout.js b/components/tilingsystem/ti
      });
 diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/tilingManager.js
 --- a/components/tilingsystem/tilingManager.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilingsystem/tilingManager.js	2026-11-27 16:58:58.308156224 +0100
++++ b/components/tilingsystem/tilingManager.js	2026-11-27 17:31:53.501105363 +0100
 @@ -27,6 +27,7 @@
  import { KeyBindingsDirection } from "../../keybindings.js";
  import TilingShellWindowManager from "../../components/windowManager/tilingShellWindowManager.js";
  import TilingLayoutWithSuggestions from "../windowsSuggestions/tilingLayoutWithSuggestions.js";
-+import { fluidShape, growIntoFreeSpace, touchingRects, freeTiles, placeInFrames, refillFrames, fitToWorkArea } from "../../utils/freeSpace.js";
++import { fluidShape, growIntoFreeSpace, touchingRects, freeTiles, fitToWorkArea } from "../../utils/freeSpace.js";
  import {
    getDefaultSeat,
    maximizeWindow,
-@@ -140,6 +141,7 @@
-    *  - handle grabbed window's movement.
-    */
-   enable() {
-+    this._enableFillScreen();
-     this._signals.connect(
-       Settings,
-       Settings.KEY_SETTING_SELECTED_LAYOUTS,
-@@ -182,6 +184,12 @@
+@@ -182,6 +183,12 @@
        global.display,
        "grab-op-begin",
        (_display, window, grabOp) => {
@@ -616,7 +608,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
          const moving = (grabOp & ~1024) === 1;
          if (!moving) return;
          this._onWindowGrabBegin(window, grabOp);
-@@ -191,6 +199,11 @@
+@@ -191,6 +198,11 @@
        global.display,
        "grab-op-end",
        (_display, window) => {
@@ -628,16 +620,15 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
          if (!this._isGrabbingWindow) return;
          this._onWindowGrabEnd(window);
        }
-@@ -366,6 +379,8 @@
+@@ -366,6 +378,7 @@
     * Destroys the tiling manager and cleans up resources.
     */
    destroy() {
 +    this._destroyed = true; // pending keep-in-screen timers check this
-+    this._disableFillScreen();
      if (this._movingWindowTimerId) {
        GLib.Source.remove(this._movingWindowTimerId);
        this._movingWindowTimerId = null;
-@@ -433,7 +448,9 @@
+@@ -433,7 +446,9 @@
          }
        });
      }
@@ -647,7 +638,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      this._installRmbFilterIfNeeded();
      this._movingWindowTimerId = GLib.timeout_add(
        GLib.PRIORITY_DEFAULT_IDLE,
-@@ -643,6 +660,20 @@
+@@ -643,6 +658,20 @@
        this._selectedTilesPreview.close(true);
        this._snapAssistingInfo.update(void 0);
      }
@@ -668,7 +659,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      if (!changedSpanMultipleTiles && isPointInsideRect(currPointerPos, this._selectedTilesPreview.rect))
        return GLib.SOURCE_CONTINUE;
      let selectionRect = tilingLayout.getTileBelow(
-@@ -670,13 +701,30 @@
+@@ -670,13 +699,30 @@
      const currentWs = window.get_workspace();
      const tilingLayout = this._workspaceTilingLayout.get(currentWs);
      if (tilingLayout) tilingLayout.close();
@@ -701,11 +692,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      this._selectedTilesPreview.close(true);
      this._snapAssist.close(true);
      this._lastCursorPos = null;
-@@ -700,9 +748,11 @@
-       return;
-     if (window.maximizedHorizontally || window.maximizedVertically) return;
-     window.originalSize = window.get_frame_rect().copy();
-+    this._pushAsideOverlapping(selectedTilesRect, window, wasSnapAssistingLayout);
+@@ -703,6 +749,7 @@
      window.assignedTile = new Tile({
        ...TileUtils.build_tile(selectedTilesRect, this._workArea)
      });
@@ -713,7 +700,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      this._easeWindowRect(window, desiredWindowRect);
      if (wasSnapAssistingLayout && Settings.SNAP_ASSIST_SYNC_LAYOUT) {
        GlobalState.get().setSelectedLayoutOfMonitor(
-@@ -738,6 +788,10 @@
+@@ -738,6 +785,10 @@
    }
  
    _openWindowsSuggestions(window, windowDesiredRect, monitorIndex, layout, innerGaps, outerGaps, scalingFactor) {
@@ -724,7 +711,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      const tiledWindows = [];
      const nontiledWindows = [];
      getWindows().forEach((extWin) => {
-@@ -784,6 +838,39 @@
+@@ -784,6 +835,39 @@
        destRect.width,
        destRect.height
      );
@@ -764,7 +751,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
    }
  
    _onSnapAssist(_, tile, layoutId) {
-@@ -792,13 +879,18 @@
+@@ -792,13 +876,18 @@
        this._snapAssistingInfo.update(void 0);
        return;
      }
@@ -784,7 +771,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      const currentWs = global.workspaceManager.get_active_workspace();
      const tilingLayout = this._workspaceTilingLayout.get(currentWs);
      if (!tilingLayout) return;
-@@ -891,17 +983,20 @@
+@@ -891,17 +980,19 @@
      this.openSelectionTilePreview(edgeTile, false, true, window);
    }
  
@@ -802,12 +789,11 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
        scaledRect.height -= scaledRect.y + scaledRect.height - this._workArea.y - this._workArea.height;
      }
 +    if (fitFreeSpace) scaledRect = this._fitRectToFreeSpace(scaledRect, window, void 0, true);
-+    this._pushAsideOverlapping(scaledRect, window);
 +    window._tsPlacedAt = Date.now();
      const gaps = buildTileGaps(
        scaledRect,
        tilingLayout.innerGaps,
-@@ -948,6 +1043,22 @@
+@@ -948,6 +1039,22 @@
      this._easeWindowRectFromTile(tile, window);
    }
  
@@ -830,62 +816,10 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
    onSpanAllTiles(window) {
      this._easeWindowRectFromTile(
        new Tile({
-@@ -961,6 +1072,138 @@
+@@ -961,6 +1068,55 @@
      );
    }
  
-+  // Local patch: hard frames. Placing a window moves the windows in its
-+  // frame(s) at once (see _pushAsideOverlapping). When a window closes or
-+  // minimizes, windows hidden in a layer under another one slide into the
-+  // empty frames. Nothing is cut or stretched.
-+  _enableFillScreen() {
-+    this._fillWatch = [];
-+    this._fillTimerId = 0;
-+    const watch = (obj, sig, cb) => this._fillWatch.push([obj, obj.connect(sig, cb)]);
-+    const watchWindow = (w) => {
-+      watch(w, "notify::minimized", () => {
-+        if (w.minimized) this._scheduleFill();
-+      });
-+      watch(w, "unmanaged", () => {
-+        this._fillWatch = this._fillWatch.filter(([obj, id]) => {
-+          if (obj !== w) return true;
-+          obj.disconnect(id);
-+          return false;
-+        });
-+        this._scheduleFill();
-+      });
-+    };
-+    global.display.list_all_windows().forEach(watchWindow);
-+    watch(global.display, "window-created", (_d, w) => watchWindow(w));
-+    watch(TilingShellWindowManager.get(), "maximized", () => this._scheduleFill());
-+  }
-+
-+  _disableFillScreen() {
-+    if (this._fillTimerId) GLib.Source.remove(this._fillTimerId);
-+    this._fillTimerId = 0;
-+    (this._fillWatch ?? []).forEach(([obj, id]) => obj.disconnect(id));
-+    this._fillWatch = [];
-+  }
-+
-+  _scheduleFill(delay = 300) {
-+    if (this._fillTimerId) GLib.Source.remove(this._fillTimerId);
-+    this._fillTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
-+      this._fillTimerId = 0;
-+      // wait while a window is dragged or the suggestions are open
-+      if (this._isGrabbingWindow || this._tilingSuggestionsLayout?._showing) this._scheduleFill();
-+      else this._fillScreen();
-+      return GLib.SOURCE_REMOVE;
-+    });
-+  }
-+
-+  // Tiled windows on this monitor's active workspace, topmost first.
-+  _tiledWindowsTopFirst(except = null, ws = global.workspaceManager.get_active_workspace()) {
-+    const wins = getWindows(ws).filter(
-+      (w) => w && w !== except && w.assignedTile && !w.minimized && !w.maximizedHorizontally && !w.maximizedVertically && !w.is_fullscreen() && w.get_window_type() === Meta.WindowType.NORMAL && w.get_monitor() === this._monitor.index
-+    );
-+    return global.display.sort_windows_by_stacking(wins).reverse();
-+  }
-+
 +  _layoutTileRects(layout, ws) {
 +    layout ??= GlobalState.get().getSelectedLayoutOfMonitor(this._monitor.index, ws.index());
 +    return layout.tiles.map((t) => TileUtils.apply_props(t, this._workArea));
@@ -896,37 +830,6 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
 +    w.assignedTile = TileUtils.build_tile(dest, this._workArea);
 +    w._tsPlacedAt = Date.now();
 +    this._easeWindowRect(w, dest);
-+  }
-+
-+  _fillScreen() {
-+    // 2026-11-22 (user): no automatic movement; layered windows stay put after close/minimize/maximize.
-+    return;
-+    const ws = global.workspaceManager.get_active_workspace();
-+    const wins = this._tiledWindowsTopFirst(null, ws);
-+    if (wins.length < 2) return;
-+    const moves = refillFrames(
-+      this._layoutTileRects(void 0, ws),
-+      wins.map((w) => w.get_frame_rect())
-+    );
-+    moves.forEach(({ i, rect }) => this._moveToFrame(wins[i], rect));
-+  }
-+
-+  // Local patch: windows in the frame(s) a window was just placed on slide
-+  // into the nearest empty frame. With every frame full they stay underneath.
-+  _pushAsideOverlapping(targetRect, movingWindow, layout = void 0) {
-+    // 2026-11-21 (user): windows under a drop stay where they are, as a layer.
-+    // The old slide-aside code below is kept so the change is easy to undo.
-+    return;
-+    const ws = movingWindow.get_workspace();
-+    if (!ws) return;
-+    const others = this._tiledWindowsTopFirst(movingWindow, ws);
-+    if (others.length === 0) return;
-+    const moves = placeInFrames(
-+      this._layoutTileRects(layout, ws),
-+      others.map((w) => w.get_frame_rect()),
-+      targetRect
-+    );
-+    moves.forEach(({ i, rect }) => this._moveToFrame(others[i], rect));
 +  }
 +
 +  // Local patch: the open space under the pointer, shaped by the layout
@@ -969,7 +872,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
    _autoTile(window, windowCreated) {
      if (window.get_monitor() !== this._monitor.index) return;
      if (window === null || window.windowType !== Meta.WindowType.NORMAL || window.get_transient_for() !== null || window.is_attached_dialog() || window.minimized || window.maximizedHorizontally || window.maximizedVertically)
-@@ -972,11 +1215,11 @@
+@@ -972,11 +1128,11 @@
        const windowActor = window.get_compositor_private();
        const id = windowActor.connect("first-frame", () => {
          if (!window.minimized && !window.maximizedHorizontally && !window.maximizedVertically && window.get_transient_for() === null && !window.is_attached_dialog())
@@ -983,7 +886,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      }
    }
  
-@@ -991,12 +1234,12 @@
+@@ -991,12 +1147,12 @@
      const workArea = Main.layoutManager.getWorkAreaForMonitor(
        window.get_monitor()
      );
@@ -1004,7 +907,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      let bestTileIndex = 0;
 diff -ruN a/components/window_menu/overriddenWindowMenu.js b/components/window_menu/overriddenWindowMenu.js
 --- a/components/window_menu/overriddenWindowMenu.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/window_menu/overriddenWindowMenu.js	2026-11-27 16:58:58.308822279 +0100
++++ b/components/window_menu/overriddenWindowMenu.js	2026-11-27 17:31:53.501500719 +0100
 @@ -170,6 +170,13 @@
          );
        });
@@ -1031,7 +934,7 @@ diff -ruN a/components/window_menu/overriddenWindowMenu.js b/components/window_m
  });
 diff -ruN a/components/windowsSuggestions/tilingLayoutWithSuggestions.js b/components/windowsSuggestions/tilingLayoutWithSuggestions.js
 --- a/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-27 16:58:58.308749889 +0100
++++ b/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-27 17:31:53.501448950 +0100
 @@ -1,7 +1,7 @@
  import { registerGObjectClass } from "../../utils/gjs.js";
 -import { Clutter } from "../../gi/ext.js";
@@ -1098,7 +1001,7 @@ diff -ruN a/components/windowsSuggestions/tilingLayoutWithSuggestions.js b/compo
        this._previews.indexOf(preview),
 diff -ruN a/extension.js b/extension.js
 --- a/extension.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/extension.js	2026-11-27 16:58:58.309030957 +0100
++++ b/extension.js	2026-11-27 17:31:53.501631598 +0100
 @@ -19,7 +19,7 @@
   * SPDX-License-Identifier: GPL-3.0-or-later
   */
@@ -1154,7 +1057,7 @@ diff -ruN a/extension.js b/extension.js
      this._keybindings?.destroy();
 diff -ruN a/indicator/indicator.js b/indicator/indicator.js
 --- a/indicator/indicator.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/indicator/indicator.js	2026-11-27 16:58:58.311965142 +0100
++++ b/indicator/indicator.js	2026-11-27 17:31:53.502151023 +0100
 @@ -1,4 +1,4 @@
 -import { St, Clutter, Shell, Gio } from "../gi/ext.js";
 +import { St, Clutter, Shell, Gio, Meta } from "../gi/ext.js";
@@ -1324,7 +1227,7 @@ diff -ruN a/indicator/indicator.js b/indicator/indicator.js
      this._layoutEditor?.destroy();
 diff -ruN a/stylesheet.css b/stylesheet.css
 --- a/stylesheet.css	2026-10-17 12:39:08.000000000 +0200
-+++ b/stylesheet.css	2026-11-27 16:58:58.312258350 +0100
++++ b/stylesheet.css	2026-11-27 17:31:53.502323022 +0100
 @@ -205,3 +205,8 @@
    border-radius-value: 6px;
    border-width-value: 1px;
@@ -1336,9 +1239,9 @@ diff -ruN a/stylesheet.css b/stylesheet.css
 +}
 diff -ruN a/utils/freeSpace.js b/utils/freeSpace.js
 --- a/utils/freeSpace.js	1970-01-01 01:00:00.000000000 +0100
-+++ b/utils/freeSpace.js	2026-11-27 16:58:58.317841363 +0100
-@@ -0,0 +1,44 @@
-+// Local patch: window placement logic (free space, hard frames, fill free
++++ b/utils/freeSpace.js	2026-11-27 17:31:53.504094216 +0100
+@@ -0,0 +1,38 @@
++// Local patch: window placement logic (free space, fill free
 +// space, fluid drag shape, Ctrl-linked resize). The logic itself is Rust, in
 +// Nero's core/ (core/src/free_space.rs, resize.rs), run as WebAssembly through
 +// nero.js. These wrappers keep the old JS signatures so the callers stay as
@@ -1351,14 +1254,8 @@ diff -ruN a/utils/freeSpace.js b/utils/freeSpace.js
 +const fitToFreeSpace = (tile, occupied, workArea, vacantTiles = []) =>
 +  call("fitToFreeSpace", R(tile), Rs(occupied), R(workArea), Rs(vacantTiles));
 +const touchingRects = (rect, rects, tol = 10) => call("touchingRects", R(rect), Rs(rects), tol);
-+const cutAway = (rect, keep) => call("cutAway", R(rect), R(keep));
-+const resolveOverlaps = (rects, priority, tiles = []) => call("resolveOverlaps", Rs(rects), priority, Rs(tiles));
-+const fillGaps = (rects, workArea) => call("fillGaps", Rs(rects), R(workArea));
 +// returns the free tiles themselves (callers compare them by identity)
 +const freeTiles = (tiles, rects) => call("freeTiles", Rs(tiles), Rs(rects)).map((i) => tiles[i]);
-+const framesOf = (tiles, rect) => call("framesOf", Rs(tiles), R(rect));
-+const placeInFrames = (tiles, others, target) => call("placeInFrames", Rs(tiles), Rs(others), R(target));
-+const refillFrames = (tiles, wins) => call("refillFrames", Rs(tiles), Rs(wins));
 +const growIntoFreeSpace = (rect, others, area, tol = 10) => call("growIntoFreeSpace", R(rect), Rs(others), R(area), tol);
 +const openSpaceAt = (p, obstacles, area) => call("openSpaceAt", P(p), Rs(obstacles), R(area));
 +const fluidShape = (tiles, obstacles, area, p, minSize = 0.33) =>
@@ -1381,4 +1278,4 @@ diff -ruN a/utils/freeSpace.js b/utils/freeSpace.js
 +// keep-onscreen: the frame shrunk to the work area and moved fully inside it
 +const fitToWorkArea = (frame, workArea) => call("fitToWorkArea", R(frame), R(workArea));
 +
-+export { linkedFind, linkedSettle, fitToWorkArea, fluidShape, openSpaceAt, growIntoFreeSpace, fitToFreeSpace, isTileVacant, touchingRects, cutAway, resolveOverlaps, fillGaps, freeTiles, framesOf, placeInFrames, refillFrames, isAdjacent, isCollinear, linkedRect, linkedMin, clampEdge };
++export { linkedFind, linkedSettle, fitToWorkArea, fluidShape, openSpaceAt, growIntoFreeSpace, fitToFreeSpace, isTileVacant, touchingRects, freeTiles, isAdjacent, isCollinear, linkedRect, linkedMin, clampEdge };

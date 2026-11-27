@@ -58,35 +58,9 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
             &arg::<Vec<Rect>>(a, 1, "rects")?,
             opt(a, 2, "tol", 10.0)?,
         )),
-        "cutAway" => ok(fs::cut_away(&arg(a, 0, "rect")?, &arg(a, 1, "keep")?)),
-        "resolveOverlaps" => ok(fs::resolve_overlaps(
-            &arg::<Vec<Rect>>(a, 0, "rects")?,
-            &arg::<Vec<Option<f64>>>(a, 1, "priority")?
-                .into_iter()
-                .map(|p| p.unwrap_or(f64::NAN))
-                .collect::<Vec<_>>(),
-            &opt::<Vec<Rect>>(a, 2, "tiles", vec![])?,
-        )),
-        "fillGaps" => ok(fs::fill_gaps(
-            &arg::<Vec<Option<Rect>>>(a, 0, "rects")?,
-            &arg(a, 1, "workArea")?,
-        )),
         "freeTiles" => ok(fs::free_tiles(
             &arg::<Vec<Rect>>(a, 0, "tiles")?,
             &arg::<Vec<Rect>>(a, 1, "rects")?,
-        )),
-        "framesOf" => ok(fs::frames_of(
-            &arg::<Vec<Rect>>(a, 0, "tiles")?,
-            &arg(a, 1, "rect")?,
-        )),
-        "placeInFrames" => ok(fs::place_in_frames(
-            &arg::<Vec<Rect>>(a, 0, "tiles")?,
-            &arg::<Vec<Rect>>(a, 1, "others")?,
-            &arg(a, 2, "target")?,
-        )),
-        "refillFrames" => ok(fs::refill_frames(
-            &arg::<Vec<Rect>>(a, 0, "tiles")?,
-            &arg::<Vec<Rect>>(a, 1, "wins")?,
         )),
         "growIntoFreeSpace" => ok(fs::grow_into_free_space(
             &arg(a, 0, "rect")?,

@@ -68,76 +68,6 @@ fn fit_and_vacancy() {
 }
 
 #[test]
-fn fill_and_resolve() {
-    assert_eq!(
-        fill_gaps(&[Some(TOP), Some(BOT)], &W),
-        vec![Some(row(0.0, 1280.0)), Some(row(1280.0, 1280.0))]
-    );
-    assert_eq!(fill_gaps(&[Some(TOP)], &W), vec![Some(row(0.0, 2560.0))]);
-    let l = r(0.0, 0.0, 2560.0, 1440.0);
-    let got = fill_gaps(
-        &[
-            Some(r(0.0, 0.0, 563.0, 720.0)),
-            Some(r(0.0, 720.0, 563.0, 720.0)),
-            Some(r(1997.0, 0.0, 563.0, 720.0)),
-            Some(r(1997.0, 720.0, 563.0, 720.0)),
-        ],
-        &l,
-    );
-    let want = [
-        r(0.0, 0.0, 1280.0, 720.0),
-        r(0.0, 720.0, 1280.0, 720.0),
-        r(1280.0, 0.0, 1280.0, 720.0),
-        r(1280.0, 720.0, 1280.0, 720.0),
-    ];
-    assert_eq!(got, want.map(Some).to_vec());
-    assert_eq!(
-        resolve_overlaps(&[row(0.0, 2560.0), MID], &[0.0, 1.0], &[TOP, MID, BOT]),
-        vec![Some(TOP), Some(MID)]
-    );
-    assert_eq!(
-        resolve_overlaps(&[row(0.0, 1920.0), MID, BOT], &[0.0, 2.0, 1.0], &[]),
-        vec![Some(TOP), Some(MID), Some(BOT)]
-    );
-    assert_eq!(
-        resolve_overlaps(&[row(700.0, 100.0), MID], &[0.0, 1.0], &[]),
-        vec![None, Some(MID)]
-    );
-    assert_eq!(
-        resolve_overlaps(&[row(640.0, 1480.0), MID], &[0.0, 1.0], &[TOP, MID, BOT]),
-        vec![None, Some(MID)]
-    );
-    assert_eq!(
-        free_tiles(&[TOP, MID, BOT], &[row(0.0, 1920.0), BOT]).len(),
-        1
-    );
-}
-
-#[test]
-fn frames() {
-    let t = [TOP, MID, BOT];
-    let mv = |i, rect| Move { i, rect };
-    assert_eq!(place_in_frames(&t, &[TOP], &TOP), vec![mv(0, MID)]);
-    assert_eq!(place_in_frames(&t, &[TOP, MID], &MID), vec![mv(1, BOT)]);
-    assert_eq!(place_in_frames(&t, &[TOP, MID, BOT], &MID), vec![]);
-    assert_eq!(
-        place_in_frames(&t, &[row(0.0, 1920.0), BOT], &TOP),
-        vec![mv(0, MID)]
-    );
-    assert_eq!(
-        place_in_frames(&t, &[MID, MID], &MID),
-        vec![mv(0, TOP), mv(1, BOT)]
-    );
-    assert_eq!(refill_frames(&t, &[MID, MID, BOT]), vec![mv(1, TOP)]);
-    assert_eq!(refill_frames(&t, &[MID]), vec![]);
-    assert_eq!(
-        place_in_frames(&t, &[row(0.0, 300.0)], &TOP),
-        vec![mv(0, MID)]
-    );
-    assert_eq!(frames_of(&t, &row(0.0, 1920.0)), vec![0, 1]);
-}
-
-#[test]
 fn grow_into_free_space_cases() {
     let a = r(0.0, 0.0, 2560.0, 1440.0);
     let g = |rect, others: &[Rect]| grow_into_free_space(&rect, others, &a, 10.0);
@@ -330,7 +260,7 @@ fn fit_keep_onscreen() {
 #[test]
 fn json_boundary() {
     // keys keep the JS order, so JSON.stringify of a result matches the old JS
-    assert_eq!(abi::call(br#"{"f":"cutAway","a":[{"x":0,"y":0,"width":10,"height":10},{"x":0,"y":0,"width":10,"height":10}]}"#), r#"{"ok":null}"#);
+    assert_eq!(abi::call(br#"{"f":"fluidShape","a":[[{"x":0,"y":0,"width":500,"height":600}],[{"x":0,"y":0,"width":500,"height":600}],{"x":0,"y":0,"width":1000,"height":600},{"x":100,"y":100},0.33]}"#), r#"{"ok":null}"#);
     assert_eq!(
         abi::call(br#"{"f":"koFit","a":[{"windowType":"NORMAL","monitor":0,"frame":{"x":-5,"y":0,"width":10,"height":10},"workArea":{"x":0,"y":0,"width":100,"height":100},"maximized":false,"fullscreen":false}]}"#),
         r#"{"ok":{"x":0.0,"y":0.0,"width":10.0,"height":10.0}}"#
@@ -342,7 +272,7 @@ fn json_boundary() {
         abi::call(br#"{"f":"version","a":[]}"#),
         format!(r#"{{"ok":"{}"}}"#, env!("CARGO_PKG_VERSION"))
     );
-    assert!(abi::call(br#"{"f":"cutAway","a":[1]}"#).starts_with(r#"{"err":"argument 0"#));
+    assert!(abi::call(br#"{"f":"isTileVacant","a":[1]}"#).starts_with(r#"{"err":"argument 0"#));
     assert!(abi::call(b"not json").starts_with(r#"{"err":"bad request"#));
     // a chain pointing at a tile that does not exist is an error, not a panic
     let bad = br#"{"f":"toggleChain","a":[[],{"vertical":true,"c":0.5,"from":0,"to":1,"segments":[{"prev":[3],"next":[],"from":0,"to":1}]}]}"#;
@@ -569,30 +499,6 @@ fn adjacency_more_cases() {
         Side::Top,
         10.0
     ));
-}
-
-#[test]
-fn frames_more_cases() {
-    let t = [TOP, MID, BOT];
-    // a window spanning top+middle, dropped on top, goes to the nearest free frame
-    assert_eq!(
-        place_in_frames(&t, &[row(0.0, 1920.0)], &TOP),
-        vec![Move { i: 0, rect: MID }]
-    );
-}
-
-#[test]
-fn fill_gaps_corner_closed() {
-    let l = r(0.0, 0.0, 2560.0, 1440.0);
-    // top-left of 2-1-2 closed: bottom-left grows up, the middle stays
-    let rects = [
-        r(0.0, 720.0, 563.0, 720.0),
-        r(563.0, 0.0, 1434.0, 1440.0),
-        r(1997.0, 0.0, 563.0, 720.0),
-        r(1997.0, 720.0, 563.0, 720.0),
-    ];
-    let want = [r(0.0, 0.0, 563.0, 1440.0), rects[1], rects[2], rects[3]];
-    assert_eq!(fill_gaps(&rects.map(Some), &l), want.map(Some).to_vec());
 }
 
 #[test]
