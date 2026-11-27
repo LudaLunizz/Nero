@@ -1,0 +1,42 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>
+  body { height: 470px; }
+  .rowm { display: flex; align-items: flex-end; justify-content: center; gap: 22px; margin-top: 26px; }
+  .m { text-align: center; }
+  .dots { display: flex; gap: 6px; justify-content: center; margin-top: 11px; }
+  .dots i { width: 8px; height: 8px; border-radius: 50%; background: #343a44; }
+  .dots i.on { background: var(--ember); box-shadow: 0 0 8px rgba(255, 138, 61, .8); width: 20px; border-radius: 4px; }
+  .m.still .dots i.on { background: #9aa3af; box-shadow: none; }
+  .osd { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(8, 9, 11, .88); border: 1px solid var(--line);
+         border-radius: 9px; padding: 4px 13px; font-size: 15px; font-weight: 700; white-space: nowrap; }
+  .osd span { color: var(--muted); font-weight: 400; }
+  .slidein { position: absolute; inset: 0; transform: translateX(22%); }
+  .slideout { position: absolute; inset: 0; transform: translateX(-78%); opacity: .45; }
+  .wheel { position: absolute; left: 50%; bottom: -15px; transform: translateX(-50%); width: 22px; height: 32px; border: 2px solid var(--ember); border-radius: 11px; background: #0e1014; }
+  .wheel::before { content: ""; position: absolute; left: 50%; top: 5px; width: 3px; height: 8px; margin-left: -1.5px; border-radius: 2px; background: var(--ember); }
+</style>
+<div class="slide">
+  <div class="head"><img src="logo.svg" alt=""><b>Nero</b><span class="sep">/</span>nero-workspaces<span class="no">Part 4 of 5</span></div>
+  <h2>Workspaces <span>per monitor.</span></h2>
+  <div class="sub">Scroll on one monitor's panel and only that monitor switches.</div>
+  <div class="rowm">
+    <div class="m still"><div class="mon" style="width:112px;height:196px"><div class="clip">
+        <div class="win b" style="left:6%;top:3%;width:88%;height:44%"></div><div class="win" style="left:6%;top:49%;width:88%;height:44%"></div><div class="tb"></div></div></div>
+      <div class="dots"><i class="on"></i><i></i><i></i><i></i></div><div class="cap">stays on <b>1</b></div></div>
+    <div class="m"><div class="mon" style="width:330px;height:196px;border-color:var(--ember)"><div class="clip">
+        <div class="slideout"><div class="win" style="left:3%;top:5%;width:46%;height:86%"></div><div class="win" style="left:51%;top:5%;width:46%;height:86%"></div></div>
+        <div class="slidein"><div class="win e" style="left:3%;top:5%;width:60%;height:86%"></div><div class="win v" style="left:65%;top:5%;width:32%;height:86%"></div></div>
+        <div class="osd">3 <span>/ 4</span></div>
+        <div class="tb"></div></div><div class="wheel"></div></div>
+      <div class="dots" style="margin-top:22px"><i></i><i></i><i class="on"></i><i></i></div><div class="cap">scroll: <b>2 → 3</b></div></div>
+    <div class="m still"><div class="mon" style="width:200px;height:120px"><div class="clip">
+        <div class="win g" style="left:3%;top:6%;width:94%;height:82%"></div><div class="tb"></div></div></div>
+      <div class="dots"><i></i><i></i><i></i><i class="on"></i></div><div class="cap">stays on <b>4</b></div></div>
+  </div>
+  <div class="foot chips" style="justify-content:center;flex-wrap:nowrap">
+    <span class="chip"><i></i>Scroll on a panel</span>
+    <span class="chip"><i></i>Three-finger swipe</span>
+    <span class="chip"><i></i>Workspace keys</span>
+    <span class="chip"><i></i>Alt+Tab switches one monitor</span>
+  </div>
+</div>

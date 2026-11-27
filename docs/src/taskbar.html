@@ -1,0 +1,56 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>
+  body { height: 344px; }
+  .wrap { margin-top: 58px; position: relative; }
+  .bar { height: 46px; border-radius: 11px; background: #07080a; border: 1px solid var(--line); display: flex; align-items: center; padding: 0 12px; gap: 9px;
+         box-shadow: 0 14px 36px rgba(0, 0, 0, .6); font-size: 12px; }
+  .grid9 { width: 18px; height: 18px; background: radial-gradient(circle, #c9ced6 1.5px, transparent 2px) 0 0 / 6px 6px; margin-right: 6px; }
+  .app { width: 28px; height: 28px; border-radius: 7px; position: relative; }
+  .app.on::after { content: ""; position: absolute; left: 7px; right: 7px; bottom: -7px; height: 2.5px; border-radius: 2px; background: var(--ember); }
+  .sp { flex: 1; }
+  .mon1 { display: flex; align-items: center; gap: 11px; border: 1px solid var(--border); background: var(--card); border-radius: 8px; padding: 5px 11px; color: var(--muted); white-space: nowrap; }
+  .mon1 b { color: var(--text); font-weight: 600; }
+  .meter { display: inline-block; width: 34px; height: 7px; border-radius: 4px; background: #2b3038; overflow: hidden; vertical-align: middle; margin-left: 4px; }
+  .meter i { display: block; height: 100%; border-radius: 4px; }
+  .clock { text-align: right; white-space: nowrap; line-height: 1.2; font-weight: 600; margin-left: 6px; } .clock span { display: block; color: var(--muted); font-weight: 400; font-size: 10.5px; }
+  .sys { display: flex; gap: 6px; margin-left: 6px; } .sys i { width: 12px; height: 12px; border-radius: 50%; border: 1.6px solid #c9ced6; }
+  .lab { position: absolute; top: -34px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+  .lab b { color: var(--text); font-weight: 600; }
+  .lab::after { content: ""; position: absolute; left: 50%; top: 21px; height: 9px; width: 1.5px; background: var(--ember); }
+  .lab.c { transform: translateX(-50%); }
+  .lab.l { left: 0; } .lab.l::after { left: 21px; }
+  .cmd { margin-top: 34px; display: flex; align-items: center; gap: 14px; }
+  .cmd .mono { font-size: 15px; background: var(--card); border: 1px solid var(--border); border-radius: 9px; padding: 9px 16px; }
+  .cmd .mono span { color: var(--ember); }
+</style>
+<div class="slide">
+  <div class="head"><img src="logo.svg" alt=""><b>Nero</b><span class="sep">/</span>taskbar<span class="no">Part 5 of 5</span></div>
+  <h2>A taskbar <span>on every monitor.</span></h2>
+  <div class="sub">Dash to Panel and Argos, set up by one command.</div>
+  <div class="wrap">
+    <span class="lab l"><b>App grid</b></span>
+    <span class="lab c" style="left:136px"><b>One icon per app</b></span>
+    <span class="lab c" style="left:503px"><b>nero sysmon</b>, every second</span>
+    <span class="lab c" style="left:757px"><b>Clock</b></span>
+    <div class="bar">
+      <div class="grid9"></div>
+      <div class="app on" style="background:linear-gradient(135deg,#ffc24d,#ff6a2b)"></div>
+      <div class="app on" style="background:linear-gradient(135deg,#8ec0ff,#4b7fe0)"></div>
+      <div class="app" style="background:linear-gradient(135deg,#7fe0a6,#2f9e63)"></div>
+      <div class="app" style="background:linear-gradient(135deg,#cdb0ff,#7d57d6)"></div>
+      <div class="app" style="background:#3a414c"></div>
+      <div class="sp"></div>
+      <div class="mon1">
+        <span>5h<span class="meter"><i style="width:38%;background:var(--green)"></i></span></span>
+        <span>wk<span class="meter"><i style="width:64%;background:var(--blue)"></i></span></span>
+        <span>↓ <b>2.4</b> ↑ <b>0.3</b></span>
+        <span>RAM<span class="meter"><i style="width:47%;background:var(--violet)"></i></span></span>
+        <span>CPU <b>48°</b> 12%</span>
+        <span>GPU <b>41°</b> 6%</span>
+      </div>
+      <div class="sys"><i></i><i></i></div>
+      <div class="clock">14:32<span>27 Nov</span></div>
+    </div>
+  </div>
+  <div class="cmd"><span class="mono"><span>$</span> nero taskbar setup</span><span class="muted">Your old settings are saved first. <code>nero taskbar undo</code> puts them back.</span></div>
+</div>

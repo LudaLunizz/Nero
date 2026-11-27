@@ -1,0 +1,45 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>
+  body { height: 418px; }
+  .row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 22px; }
+  .part { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 13px 13px; height: 152px; position: relative; }
+  .part svg { width: 30px; height: 30px; color: var(--ember); fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .part .n { position: absolute; right: 12px; top: 11px; font-size: 12px; font-weight: 700; color: var(--dim); }
+  .part .t { font-family: "JetBrains Mono", monospace; font-size: 12.5px; font-weight: 700; margin-top: 9px; white-space: nowrap; }
+  .part .d { font-size: 12.5px; color: var(--muted); margin-top: 5px; line-height: 1.35; }
+  .wires { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; height: 26px; }
+  .wires i { width: 2px; height: 100%; margin: 0 auto; background: linear-gradient(180deg, var(--border), var(--ember)); }
+  .core { border: 1.5px solid var(--ember); border-radius: 12px; padding: 13px 18px; display: flex; align-items: center; gap: 14px;
+          background: linear-gradient(90deg, rgba(255, 138, 61, .16), rgba(255, 194, 77, .05)); }
+  .core .t { font-size: 17px; font-weight: 800; white-space: nowrap; }
+  .core .d { font-size: 13px; color: var(--muted); }
+  .core .chips { margin-left: auto; flex-wrap: nowrap; }
+</style>
+<div class="slide">
+  <div class="head"><img src="logo.svg" alt=""><b>Nero</b><span class="sep">/</span>overview</div>
+  <h2>Five parts. <span>One Rust core.</span></h2>
+  <div class="sub">Take one part or all five. Each one installs on its own.</div>
+  <div class="row">
+    <div class="part"><span class="n">1</span>
+      <svg viewBox="0 0 32 32"><rect x="3" y="5" width="26" height="19" rx="3"/><rect x="13" y="10" width="12" height="10" rx="1.5"/><path d="M12 28h8M6 12h4m-2-2 2 2-2 2"/></svg>
+      <div class="t">keep-onscreen</div><div class="d">New windows always fit the monitor they open on.</div></div>
+    <div class="part"><span class="n">2</span>
+      <svg viewBox="0 0 32 32"><rect x="3" y="5" width="12" height="22" rx="2.5"/><rect x="18" y="5" width="11" height="9.5" rx="2.5"/><rect x="18" y="17.5" width="11" height="9.5" rx="2.5"/></svg>
+      <div class="t">tilingshell-patch</div><div class="d">Tiling, dragging and resizing for Tiling Shell 18.0.</div></div>
+    <div class="part"><span class="n">3</span>
+      <svg viewBox="0 0 32 32"><path d="M6 16a10 10 0 1 0 3-7.1"/><path d="M5 5v5h5"/><rect x="12" y="12" width="8" height="8" rx="1.5"/></svg>
+      <div class="t">nero-layout</div><div class="d">Every window back in its place after login.</div></div>
+    <div class="part"><span class="n">4</span>
+      <svg viewBox="0 0 32 32"><rect x="2.5" y="6" width="12" height="14" rx="2.5"/><rect x="17.5" y="6" width="12" height="14" rx="2.5"/><path d="M5.5 25.5h.01M8.5 25.5h.01M11.5 25.5h.01M20.5 25.5h.01M23.5 25.5h.01M26.5 25.5h.01" stroke-width="2.6"/></svg>
+      <div class="t">nero-workspaces</div><div class="d">Each monitor switches workspaces on its own.</div></div>
+    <div class="part"><span class="n">5</span>
+      <svg viewBox="0 0 32 32"><rect x="3" y="5" width="26" height="22" rx="3"/><path d="M3 21h26"/><path d="M7 24h.01M11 24h.01M15 24h.01" stroke-width="2.4"/><path d="M21 24h5"/></svg>
+      <div class="t">taskbar</div><div class="d">A bottom taskbar with a system monitor in it.</div></div>
+  </div>
+  <div class="wires"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="core">
+    <div><div class="t">The core <span class="mono em" style="font-size:14px;margin-left:6px">nero_core.wasm</span></div>
+      <div class="d">Rust, built to WebAssembly. Every decision is made here.</div></div>
+    <div class="chips"><span class="chip">In-process</span><span class="chip">No daemon</span><span class="chip">No D-Bus</span></div>
+  </div>
+</div>
