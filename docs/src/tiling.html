@@ -1,0 +1,67 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>
+  body { height: 590px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 20px; }
+  .f { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 12px 11px; }
+  .f .mon { height: 112px; box-shadow: none; border-width: 1.5px; }
+  .f .t { font-size: 14.5px; font-weight: 700; margin-top: 10px; display: flex; align-items: center; gap: 6px; }
+  .f .d { font-size: 12.5px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+  .tile { position: absolute; border: 1px dashed #4a525f; border-radius: 5px; }
+  .blob { position: absolute; border-radius: 12px; border: 1.5px solid var(--ember); background: rgba(255, 138, 61, .22); }
+  .ptr { position: absolute; width: 0; height: 0; border-left: 7px solid #fff; border-top: 4px solid transparent; border-bottom: 9px solid transparent; transform: rotate(-18deg); filter: drop-shadow(0 1px 1px #000); }
+  .ar { position: absolute; color: var(--ember); font-size: 15px; font-weight: 700; line-height: 1; }
+  .bar { position: absolute; background: var(--ember); border-radius: 2px; box-shadow: 0 0 8px rgba(255, 138, 61, .8); }
+  .split { position: absolute; background: #4a525f; }
+</style>
+<div class="slide">
+  <div class="head"><img src="logo.svg" alt=""><b>Nero</b><span class="sep">/</span>tilingshell-patch<span class="no">Part 2 of 5</span></div>
+  <h2>Tiling Shell 18.0, <span>patched.</span></h2>
+  <div class="sub">Tile, drag and resize, and every other window stays where it is.</div>
+  <div class="grid">
+    <div class="f"><div class="mon"><div class="clip">
+        <div class="tile" style="left:3%;top:6%;width:30%;height:80%"></div><div class="tile" style="left:67%;top:6%;width:30%;height:80%"></div>
+        <div class="win" style="left:22%;top:20%;width:50%;height:58%"></div>
+        <div class="win e" style="left:35%;top:6%;width:30%;height:80%"></div>
+        <div class="tb"></div></div></div>
+      <div class="t">Exact placement</div><div class="d">A dropped window gets exactly that tile. Nothing is pushed aside.</div></div>
+    <div class="f"><div class="mon"><div class="clip">
+        <div class="win" style="left:3%;top:6%;width:30%;height:80%"></div>
+        <div class="win" style="left:35%;top:6%;width:62%;height:38%"></div>
+        <div class="blob" style="left:35%;top:47%;width:62%;height:39%"></div>
+        <div class="ptr" style="left:63%;top:60%"></div>
+        <div class="tb"></div></div></div>
+      <div class="t">Fluid drag preview</div><div class="d">The preview morphs to the largest open space around the pointer.</div></div>
+    <div class="f"><div class="mon"><div class="clip">
+        <div class="win" style="left:3%;top:6%;width:22%;height:80%"></div>
+        <div class="win" style="left:78%;top:6%;width:19%;height:80%"></div>
+        <div class="ghost e" style="left:27%;top:6%;width:49%;height:80%"></div>
+        <div class="win e" style="left:41%;top:26%;width:22%;height:40%"></div>
+        <div class="ar" style="left:31%;top:39%">←</div><div class="ar" style="left:66%;top:39%">→</div>
+        <div class="ar" style="left:49.5%;top:8%">↑</div><div class="ar" style="left:49.5%;top:69%">↓</div>
+        <div class="tb"></div></div></div>
+      <div class="t">Fill free space</div><div class="d">Grows until it meets other windows or the screen edge.</div></div>
+    <div class="f"><div class="mon"><div class="clip">
+        <div class="win b" style="left:3%;top:6%;width:40%;height:80%"></div>
+        <div class="win b" style="left:45%;top:6%;width:52%;height:39%"></div>
+        <div class="win b" style="left:45%;top:47%;width:52%;height:39%"></div>
+        <div class="bar" style="left:43.4%;top:6%;width:3px;height:80%"></div>
+        <div class="ar" style="left:39%;top:38%;background:#0e1014;border-radius:9px;padding:1px 5px 3px">↔</div>
+        <div class="tb"></div></div></div>
+      <div class="t"><kbd>Ctrl</kbd> Linked resize</div><div class="d">Every window touching that edge resizes with it.</div></div>
+    <div class="f"><div class="mon">
+        <div class="ghost" style="left:74%;top:16%;width:38%;height:60%"></div>
+        <div class="clip">
+        <div class="win" style="left:3%;top:6%;width:44%;height:80%"></div>
+        <div class="win e" style="left:59%;top:16%;width:38%;height:60%"></div>
+        <div class="ar" style="left:49%;top:38%">←</div>
+        <div class="tb"></div></div></div>
+      <div class="t">Keep in work area</div><div class="d">A window too big for its frame slides back onto its monitor.</div></div>
+    <div class="f"><div class="mon"><div class="clip">
+        <div class="split" style="left:33%;top:0;width:1.5px;height:93%"></div><div class="split" style="left:66%;top:0;width:1.5px;height:93%"></div>
+        <div class="split" style="left:0;top:30%;width:33%;height:1.5px"></div>
+        <div class="bar" style="left:33%;top:55%;width:67%;height:3px"></div>
+        <div class="ptr" style="left:60%;top:58%"></div>
+        <div class="tb"></div></div></div>
+      <div class="t">Layout editor <kbd>Tab</kbd> <kbd>L</kbd></div><div class="d">Tab to the next monitor. L links one line across columns.</div></div>
+  </div>
+</div>

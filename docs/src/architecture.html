@@ -1,0 +1,38 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>
+  body { height: 440px; }
+  .flow { display: flex; align-items: stretch; margin-top: 28px; }
+  .box { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 13px; padding: 15px 16px; }
+  .box .k { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  .box .t { font-size: 18px; font-weight: 800; margin-top: 2px; }
+  .box .d { font-size: 12.5px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
+  .box .mono { font-size: 11px; color: var(--muted); margin-top: 10px; line-height: 1.65; }
+  .box.core { border: 1.5px solid var(--ember); background: linear-gradient(160deg, rgba(255, 138, 61, .18), rgba(255, 194, 77, .04)); }
+  .box.core .mono { color: #e9b58f; white-space: pre; }
+  .link { width: 100px; flex: none; display: flex; flex-direction: column; justify-content: center; gap: 16px; text-align: center; font-size: 11.5px; color: var(--muted); }
+  .link .a { color: var(--ember); font-size: 22px; line-height: .8; display: block; }
+</style>
+<div class="slide">
+  <div class="head"><img src="logo.svg" alt=""><b>Nero</b><span class="sep">/</span>how it works</div>
+  <h2>JavaScript asks. <span>Rust decides.</span></h2>
+  <div class="sub">GNOME Shell only lets JavaScript move windows, so the JS stays thin.</div>
+  <div class="flow">
+    <div class="box"><div class="k">The desktop</div><div class="t">GNOME Shell</div>
+      <div class="d">Sends the signals and owns the windows.</div>
+      <div class="mono">window opened<br>drag, resize<br>scroll, swipe, keys</div></div>
+    <div class="link"><div>event<span class="a">→</span></div><div><span class="a">←</span>move window</div></div>
+    <div class="box"><div class="k">The shim</div><div class="t">Extension JS</div>
+      <div class="d">Passes events in, carries out what comes back.</div>
+      <div class="mono">extension.js<br>nero.js (loader)<br>helpers.js</div></div>
+    <div class="link"><div>where does it go?<span class="a">→</span></div><div><span class="a">←</span>exactly here</div></div>
+    <div class="box core"><div class="k">The core</div><div class="t">Rust core</div>
+      <div class="d">Built to WebAssembly. Every decision, all the state.</div>
+      <div class="mono">keep_model  layout_model<br>ws_model  free_space<br>resize  taskbar  sysmon</div></div>
+  </div>
+  <div class="foot chips" style="justify-content:center;flex-wrap:nowrap">
+    <span class="chip"><i></i>Synchronous</span>
+    <span class="chip"><i></i>In-process</span>
+    <span class="chip"><i></i>No daemon, no D-Bus</span>
+    <span class="chip"><i></i>A Rust panic cannot take the shell down</span>
+  </div>
+</div>

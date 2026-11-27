@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/banner.png" width="860" alt="Nero, a window manager for GNOME: Wayland, GNOME 46 to 50, Rust core">
+</p>
+
 # Nero
 
 **Your GNOME desktop is broken. You just got used to it.**
@@ -17,7 +21,15 @@ inside the shell with zero daemons and zero latency. MIT licensed.
 
 ## What's in the box
 
+<p align="center">
+  <img src="docs/parts.png" width="860" alt="The five parts of Nero (keep-onscreen, tilingshell-patch, nero-layout, nero-workspaces, taskbar) on one Rust core">
+</p>
+
 ### 1. keep-onscreen
+
+<p align="center">
+  <img src="docs/keep-onscreen.png" width="860" alt="Before: a new window sticks out past the edge of the monitor. With keep-onscreen: it is shrunk and moved to fit">
+</p>
 
 Every new window fits its monitor. Period. No more half-visible dialogs, no more
 windows spawning on the wrong edge of a portrait screen. It measures once on the
@@ -27,6 +39,10 @@ Also lets you pin password prompts to one specific monitor and kill that annoyin
 dark overlay GNOME puts on every screen while a prompt is open.
 
 ### 2. Tiling Shell patch
+
+<p align="center">
+  <img src="docs/tiling.png" width="860" alt="Six changes to Tiling Shell 18.0: exact placement, fluid drag preview, fill free space, Ctrl-linked resize, keep in work area, layout editor keys">
+</p>
 
 A patch set for [Tiling Shell](https://github.com/domferr/tilingshell) 18.0 that
 makes tiling behave like you thought it already did:
@@ -44,6 +60,10 @@ makes tiling behave like you thought it already did:
 
 ### 3. nero-layout
 
+<p align="center">
+  <img src="docs/layout.png" width="860" alt="The windows on two monitors before a log out, the saved layout.json, and the same windows back in place after the next login">
+</p>
+
 Remembers where every window is. Puts them back after login — same monitor, same
 spot, same workspace, same stacking order. If an app isn't running yet, it starts
 it for you after 15 seconds.
@@ -52,6 +72,10 @@ Shut down at 2 AM with 14 windows across 3 monitors? Log back in and they're all
 exactly where you left them. That's it. That's the feature.
 
 ### 4. nero-workspaces
+
+<p align="center">
+  <img src="docs/workspaces.png" width="860" alt="Three monitors: scrolling on the middle one switches it from workspace 2 to 3, the other two stay where they are">
+</p>
 
 Every monitor gets its own workspaces. Scroll on a panel — only that monitor
 switches. Keyboard shortcut — only the focused monitor switches. Click a window on
@@ -64,6 +88,10 @@ Your monitors are independent. They should act like it.
 
 ### 5. taskbar
 
+<p align="center">
+  <img src="docs/taskbar.png" width="860" alt="The taskbar: app grid, one icon per app, the nero sysmon readings, clock; set up with nero taskbar setup">
+</p>
+
 A proper taskbar: Dash to Panel at the bottom of every monitor, one icon per app
 with window previews, and a built-in system monitor showing CPU, GPU, RAM, network,
 and your Claude Code usage — all updating every second from a Rust binary.
@@ -74,6 +102,10 @@ your status info out of the way.
 ---
 
 ## The Rust thing
+
+<p align="center">
+  <img src="docs/architecture.png" width="860" alt="How it works: GNOME Shell sends an event, the extension JS asks the Rust core where the window goes, and moves it there">
+</p>
 
 The placement logic, the workspace state machine, the layout engine, the tiling
 geometry — it's all Rust, compiled to WebAssembly. GNOME Shell only lets JavaScript

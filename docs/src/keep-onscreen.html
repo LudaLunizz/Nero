@@ -1,0 +1,32 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>
+  body { height: 478px; }
+  .pair { display: flex; align-items: center; justify-content: center; gap: 66px; margin-top: 24px; }
+  .side { width: 300px; }
+  .side .chip { margin-bottom: 12px; }
+  .mon { width: 300px; height: 176px; }
+</style>
+<div class="slide">
+  <div class="head"><img src="logo.svg" alt=""><b>Nero</b><span class="sep">/</span>keep-onscreen<span class="no">Part 1 of 5</span></div>
+  <h2>No more windows <span>half off the edge.</span></h2>
+  <div class="sub">A new window is shrunk and moved until it fits the monitor it opens on.</div>
+  <div class="pair">
+    <div class="side"><span class="chip red">Before</span>
+      <div class="mon">
+        <div class="ghost" style="left:52%;top:36%;width:64%;height:74%"></div>
+        <div class="clip"><div class="win" style="left:52%;top:36%;width:64%;height:74%"></div>
+          <div class="win" style="left:4%;top:8%;width:38%;height:52%"></div><div class="tb"></div></div>
+      </div></div>
+    <div class="arrow">→</div>
+    <div class="side"><span class="chip green">With keep-onscreen</span>
+      <div class="mon"><div class="clip">
+        <div class="win" style="left:4%;top:8%;width:38%;height:52%"></div>
+        <div class="win e" style="left:46%;top:6%;width:51%;height:85%"></div><div class="tb"></div></div>
+      </div></div>
+  </div>
+  <div class="foot chips" style="justify-content:center;flex-wrap:nowrap">
+    <span class="chip"><i></i>Acts once, on the first frame</span>
+    <span class="chip"><i></i>Maximized and full-screen left alone</span>
+    <span class="chip"><i></i>Password prompts on one monitor</span>
+  </div>
+</div>

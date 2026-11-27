@@ -1,0 +1,46 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>
+  body { height: 424px; }
+  .flow { display: flex; align-items: center; justify-content: space-between; margin-top: 30px; }
+  .scene { position: relative; width: 262px; height: 150px; }
+  .scene .mon { position: absolute; }
+  .mid { width: 206px; text-align: center; }
+  .file { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; text-align: left;
+          font-family: "JetBrains Mono", monospace; font-size: 10.5px; line-height: 1.6; color: var(--muted); }
+  .file b { color: var(--ember); font-weight: 700; } .file u { color: var(--text); text-decoration: none; }
+  .file .name { color: var(--text); font-weight: 700; font-size: 11px; border-bottom: 1px solid var(--border); padding-bottom: 5px; margin-bottom: 5px; }
+  .steps { display: flex; justify-content: space-between; color: var(--ember); font-size: 22px; line-height: 1; margin-bottom: 8px; padding: 0 30px; }
+  .off { opacity: .28; filter: grayscale(1); }
+</style>
+<div class="slide">
+  <div class="head"><img src="logo.svg" alt=""><b>Nero</b><span class="sep">/</span>nero-layout<span class="no">Part 3 of 5</span></div>
+  <h2>Log in. <span>Everything is back.</span></h2>
+  <div class="sub">Every app window returns to its monitor, spot, workspace and state.</div>
+  <div class="flow">
+    <div><div class="scene">
+      <div class="mon" style="left:0;top:0;width:74px;height:132px"><div class="clip">
+        <div class="win b" style="left:6%;top:4%;width:88%;height:42%"></div><div class="win v" style="left:6%;top:49%;width:88%;height:42%"></div><div class="tb"></div></div></div>
+      <div class="mon" style="left:84px;top:18px;width:178px;height:106px"><div class="clip">
+        <div class="win e" style="left:3%;top:5%;width:55%;height:84%"></div><div class="win g" style="left:60%;top:5%;width:37%;height:40%"></div>
+        <div class="win" style="left:60%;top:49%;width:37%;height:40%"></div><div class="tb"></div></div></div>
+      </div><div class="cap"><b>Before</b> shutdown, crash or log out</div></div>
+    <div class="mid">
+      <div class="steps"><span>→</span><span>→</span></div>
+      <div class="file"><div class="name">layout.json</div>
+        app&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<u>org.gnome.Ptyxis</u><br>monitor&nbsp;&nbsp;&nbsp;<b>DP-1</b><br>rect&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<u>3% 5% 55% 84%</u><br>workspace <u>2</u></div>
+      <div class="cap">Saved every minute</div>
+    </div>
+    <div><div class="scene">
+      <div class="mon" style="left:0;top:0;width:74px;height:132px"><div class="clip">
+        <div class="win b" style="left:6%;top:4%;width:88%;height:42%"></div><div class="win v" style="left:6%;top:49%;width:88%;height:42%"></div><div class="tb"></div></div></div>
+      <div class="mon" style="left:84px;top:18px;width:178px;height:106px"><div class="clip">
+        <div class="win e" style="left:3%;top:5%;width:55%;height:84%"></div><div class="win g" style="left:60%;top:5%;width:37%;height:40%"></div>
+        <div class="win" style="left:60%;top:49%;width:37%;height:40%"></div><div class="tb"></div></div></div>
+      </div><div class="cap"><b>After</b> the next login</div></div>
+  </div>
+  <div class="foot chips" style="justify-content:center;flex-wrap:nowrap">
+    <span class="chip"><i></i>Sizes as a share of the monitor</span>
+    <span class="chip"><i></i>Stacking order restored</span>
+    <span class="chip"><i></i>Missing apps started once</span>
+  </div>
+</div>
