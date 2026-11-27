@@ -10,7 +10,7 @@
 
 use crate::{
     Point, Rect, fit, free_space as fs, layout, line_groups as lg, resize, touchpad as tp,
-    workspaces as ws,
+    ws_model as wm,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -189,33 +189,89 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
             &arg::<String>(a, 2, "app")?,
             &arg::<String>(a, 3, "title")?,
         )),
-        "wsPlanSwitch" => ok(ws::plan_switch(
-            &arg::<Vec<ws::Win>>(a, 0, "windows")?,
-            arg(a, 1, "monitor")?,
-            arg(a, 2, "target")?,
+        "wsInit" => ok(wm::start(
+            opt::<Option<String>>(a, 0, "saved", None)?.as_deref(),
+            arg(a, 1, "config")?,
         )),
-        "wsAdopt" => ok(ws::adopt(
-            arg(a, 0, "real")?,
-            arg(a, 1, "current")?,
-            arg(a, 2, "count")?,
+        "wsStateText" => ok(wm::state_text(&arg(a, 0, "model")?)),
+        "wsSavedGnome" => ok(wm::saved_gnome(&arg(a, 0, "settings")?)),
+        "wsGiveBack" => ok(wm::give_back(&arg::<String>(a, 0, "text")?)),
+        "wsKeys" => ok(wm::keys()),
+        "wsConfig" => ok(wm::set_config(
+            arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            arg(a, 2, "config")?,
         )),
-        "wsRealFor" => ok(ws::real_for(arg(a, 0, "vw")?, arg(a, 1, "current")?)),
-        "wsStep" => ok(ws::step(
-            arg(a, 0, "current")?,
-            arg(a, 1, "delta")?,
-            arg(a, 2, "count")?,
-            opt(a, 3, "wrap", false)?,
+        "wsTrack" => ok(wm::track(
+            arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            arg(a, 2, "id")?,
+            arg(a, 3, "fresh")?,
         )),
-        "wsScroll" => ok(ws::scroll(
-            &arg(a, 0, "state")?,
-            &arg(a, 1, "event")?,
-            opt(a, 2, "threshold", 1.0)?,
-            opt(a, 3, "cooldownMs", 250.0)?,
+        "wsUntrack" => ok(wm::untrack(arg(a, 0, "model")?, arg(a, 1, "id")?)),
+        "wsPlace" => ok(wm::place(
+            arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            arg(a, 2, "id")?,
         )),
-        "swipePoints" => ok(tp::swipe_points(arg(a, 0, "count")?)),
-        "swipeTarget" => ok(tp::swipe_target(
-            arg(a, 0, "endProgress")?,
-            arg(a, 1, "count")?,
+        "wsWindowMoved" => ok(wm::window_moved(
+            arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            arg(a, 2, "id")?,
+        )),
+        "wsEnteredMonitor" => ok(wm::entered_monitor(
+            arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            arg(a, 2, "id")?,
+        )),
+        "wsReconcile" => ok(wm::reconcile(arg(a, 0, "model")?, &arg(a, 1, "facts")?)),
+        "wsReadopt" => ok(wm::readopt_all(arg(a, 0, "model")?, &arg(a, 1, "facts")?)),
+        "wsDisable" => ok(wm::disable(&arg(a, 0, "model")?, &arg(a, 1, "facts")?)),
+        "wsSwitch" => ok(wm::switch(
+            arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            arg(a, 2, "monitor")?,
+            arg(a, 3, "target")?,
+            opt(a, 4, "focusWindow", None)?,
+        )),
+        "wsStepMonitor" => ok(wm::step_monitor(
+            arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            arg(a, 2, "monitor")?,
+            arg(a, 3, "delta")?,
+        )),
+        "wsKey" => ok(wm::key(
+            arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            &arg::<String>(a, 2, "binding")?,
+            arg(a, 3, "monitor")?,
+            opt(a, 4, "window", None)?,
+        )),
+        "wsActiveChanged" => ok(wm::active_changed(
+            arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            arg(a, 2, "active")?,
+        )),
+        "wsPanelScroll" => ok(wm::panel_scroll(
+            arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            arg(a, 2, "monitor")?,
+            &arg(a, 3, "event")?,
+        )),
+        "wsForgetPanels" => ok(wm::forget_panels(arg(a, 0, "model")?)),
+        "wsIgnoreScroll" => ok(wm::ignore_scroll(
+            &arg::<Vec<wm::ActorInfo>>(a, 0, "chain")?,
+            &arg::<String>(a, 1, "iconAction")?,
+        )),
+        "wsSwipeBegin" => ok(wm::swipe_begin(
+            arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            arg(a, 2, "monitor")?,
+        )),
+        "wsSwipeEnd" => ok(wm::swipe_end(
+            arg(a, 0, "model")?,
+            &arg(a, 1, "facts")?,
+            arg(a, 2, "endProgress")?,
         )),
         "scrollPlugin" => ok(tp::scroll_plugin(arg(a, 0, "percent")?)),
         "restackOrder" => ok(layout::restack_order(

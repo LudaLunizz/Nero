@@ -13,8 +13,11 @@
 // Super+1..) switch the monitor of the focused window. Activating a parked window
 // (taskbar, Alt+Tab, a notification) shows its workspace on its own monitor.
 //
-// The bookkeeping (which window goes where, scroll -> steps) is Rust (Nero's
-// core/src/workspaces.rs, core/src/touchpad.rs), run as WebAssembly through nero.js.
+// All decisions and all state are Rust (Nero's core/src/ws_model.rs), run as
+// WebAssembly through nero.js. This file only passes GNOME's events in, with
+// the facts the core needs (windows, monitors, focus), and carries out the
+// effects it gets back (move a window, focus one, show the OSD, save). The
+// core's model is kept here between calls without being read.
 //
 // Also here: the two-finger scroll speed of the touchpad, which GNOME has no
 // setting for. It is a libinput plugin (core/src/scroll_speed.lua) written to
@@ -28,12 +31,12 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as SwipeTracker from 'resource:///org/gnome/shell/ui/swipeTracker.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {call} from './nero.js';
-import {makeLog, connectorOf as connectorName, Registry} from './helpers.js';
+import {makeLog, connectorOf, Registry} from './helpers.js';
 import {writeScrollPlugin} from './scrollSpeed.js';
 
-const STATE_VERSION = 1;
 const DTP_UUID = 'dash-to-panel@jderose9.github.com';
 const VISIBLE = 0;
+const CONFIG_KEYS = ['workspaces-per-monitor', 'wrap-around', 'show-osd', 'scroll-threshold', 'scroll-cooldown-ms'];
 
 const stateFile = () => Gio.File.new_for_path(GLib.build_filenamev([GLib.get_user_state_dir(), 'nero', 'workspaces.json']));
 
@@ -52,31 +55,18 @@ const laterRemove = id => {
 
 const log = makeLog('nero-workspaces');
 
-// Keybindings GNOME Shell handles with its workspace switcher, and their modes.
-const NO = Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW;
-const N = Shell.ActionMode.NORMAL;
-const KEYS = [
-    ...['left', 'right', 'up', 'down', 'last'].map(t => [`switch-to-workspace-${t}`, NO]),
-    ...['left', 'right', 'up', 'down'].map(t => [`move-to-workspace-${t}`, NO]),
-    ...Array.from({length: 12}, (_, i) => [`switch-to-workspace-${i + 1}`, NO]),
-    ...Array.from({length: 12}, (_, i) => [`move-to-workspace-${i + 1}`, N]),
-    ['move-to-workspace-last', N],
-];
-
 const TRACKED_TYPES = new Set([
     Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY,
 ]);
 
-// A monitor without a connector name is tracked as "#index".
-const connectorOf = index => connectorName(index, `#${index}`);
-
 export default class NeroWorkspaces extends Extension {
     enable() {
         this._settings = this.getSettings();
-        this._current = new Map(); // connector -> virtual workspace shown
-        this._vw = new Map(); // Meta.Window -> virtual workspace
+        this._model = null; // the core's state (core/src/ws_model.rs Model), opaque here
+        this._ids = new Map(); // tracked Meta.Window -> id for the core
+        this._wins = new Map(); // id -> Meta.Window
+        this._nextId = 1;
         this._winReg = new Registry({tag: 'nero-workspaces'}); // the signals of every tracked window
-        this._scroll = new Map(); // panel actor -> scroll state
         this._panelSignals = [];
         this._reg = new Registry({tag: 'nero-workspaces', later: {add: laterAdd, remove: laterRemove}});
         this._moving = 0;
@@ -98,9 +88,10 @@ export default class NeroWorkspaces extends Extension {
 
     _enable() {
         // Fails here, before anything is changed, when nero_core.wasm is missing or broken.
-        call('wsStep', 0, 0, 1, false);
-        this._loadState();
+        const start = call('wsInit', this._loadStateText(), this._config());
+        this._model = start.model;
         this._takeOverMutter();
+        this._apply(start); // GNOME's number of workspaces
         this._patchAnimation();
         this._bindKeys();
         this._setupSwipe();
@@ -112,23 +103,25 @@ export default class NeroWorkspaces extends Extension {
         reg.connect(display, 'window-created', (_d, w) => this._later(() => this._track(w, true)));
         reg.connect(display, 'window-entered-monitor', (_d, _m, w) => this._onMonitor(w));
         reg.connect(wm, 'active-workspace-changed', () => this._onActiveChanged());
-        reg.connect(this._settings, 'changed::workspaces-per-monitor', () => this._onCountChanged());
+        for (const key of CONFIG_KEYS)
+            reg.connect(this._settings, `changed::${key}`, () => this._onConfigChanged());
         reg.connect(this._settings, 'changed::three-finger-swipe', () => this._setupSwipe());
         reg.connect(this._settings, 'changed::touchpad-scroll-speed', () => this._writeScrollPlugin());
-        reg.connect(global.backend.get_monitor_manager(), 'monitors-changed', () => this._later(() => this._reconcileAll()));
+        reg.connect(global.backend.get_monitor_manager(), 'monitors-changed',
+            () => this._later(() => this._apply(call('wsReconcile', this._model, this._facts()))));
         reg.connect(Main.extensionManager, 'extension-state-changed', (_m, ext) => {
             if (ext.uuid === DTP_UUID)
                 this._hookPanels();
         });
         for (const actor of global.get_window_actors())
             this._track(actor.meta_window, false);
-        this._reconcileAll();
+        this._apply(call('wsReconcile', this._model, this._facts()));
         if (wm.get_active_workspace_index() !== VISIBLE)
             this._onActiveChanged();
         this._hookPanels();
         // GNOME applies the workspace settings above a moment later (windows on
         // other monitors stop being on all workspaces): place everything again.
-        this._later(() => this._readoptAll());
+        this._later(() => this._apply(call('wsReadopt', this._model, this._facts())));
     }
 
     disable() {
@@ -144,36 +137,130 @@ export default class NeroWorkspaces extends Extension {
         this._unpatchAnimation();
         // Put every window back on the visible workspace, so nothing is lost
         // when Nero is switched off, then give GNOME its own settings back.
-        this._moving++;
-        for (const w of this._vw.keys()) {
+        if (this._model) {
             try {
-                if (w.get_workspace()?.index() !== VISIBLE)
-                    w.change_workspace_by_index(VISIBLE, false);
-            } catch {
-                // window already gone
+                this._doEffects(call('wsDisable', this._model, this._facts()));
+            } catch (e) {
+                logError(e, '[nero-workspaces] putting the windows back');
             }
         }
-        this._moving--;
         this._winReg.destroy();
-        this._vw.clear();
+        this._ids.clear();
+        this._wins.clear();
+        this._model = null;
         this._giveBackMutter();
         this._settings = null;
     }
 
+    // ---- talking to the core -----------------------------------------------
+
+    _config() {
+        const s = this._settings;
+        return {
+            count: s.get_int('workspaces-per-monitor'),
+            wrap: s.get_boolean('wrap-around'),
+            showOsd: s.get_boolean('show-osd'),
+            scrollThreshold: s.get_double('scroll-threshold'),
+            scrollCooldownMs: s.get_int('scroll-cooldown-ms'),
+        };
+    }
+
+    // What the core needs to know about GNOME right now. `extra` is a window
+    // that is being tracked and has no id in the maps yet: [window, id].
+    _facts(extra = null) {
+        const tracked = [...this._ids];
+        if (extra)
+            tracked.push(extra);
+        const byWin = new Map(tracked);
+        const stack = new Map(global.display.sort_windows_by_stacking([...byWin.keys()]).map((w, i) => [w, i]));
+        const windows = [];
+        for (const [w, id] of tracked) {
+            windows.push({
+                id,
+                monitor: w.get_monitor(),
+                real: w.get_workspace()?.index() ?? null,
+                onAll: w.is_on_all_workspaces(),
+                minimized: w.minimized,
+                stack: stack.get(w) ?? 0,
+            });
+        }
+        const fw = global.display.focus_window;
+        const n = global.display.get_n_monitors();
+        return {
+            monitors: Array.from({length: n}, (_, i) => connectorOf(i, '')),
+            windows,
+            focus: byWin.get(fw) ?? null,
+            focusMonitor: fw ? fw.get_monitor() : null,
+            currentMonitor: global.display.get_current_monitor(),
+        };
+    }
+
+    // A core answer {model, effects}: keep the model, carry out the effects.
+    _apply(out) {
+        this._model = out.model;
+        this._doEffects(out.effects);
+    }
+
+    _doEffects(effects) {
+        const time = global.get_current_time();
+        for (const e of effects) {
+            const w = e.id !== undefined ? this._wins.get(e.id) : null;
+            switch (e.do) {
+            case 'move':
+                if (w)
+                    this._move(w, e.real);
+                break;
+            case 'focus':
+                if (w)
+                    Main.activateWindow(w, time);
+                break;
+            case 'raise':
+                w?.activate(time);
+                break;
+            case 'osd':
+                Main.osdWindowManager.showOne(e.monitor, Gio.ThemedIcon.new('view-paged-symbolic'), e.text);
+                break;
+            case 'save':
+                this._queueSave();
+                break;
+            case 'numWorkspaces':
+                new Gio.Settings({schema_id: 'org.gnome.desktop.wm.preferences'}).set_int('num-workspaces', e.n);
+                break;
+            case 'placeLater':
+                this._later(() => this._apply(call('wsPlace', this._model, this._facts(), e.id)));
+                break;
+            case 'showVisible':
+                this._moving++;
+                try {
+                    global.workspace_manager.get_workspace_by_index(VISIBLE).activate(time);
+                } finally {
+                    this._moving--;
+                }
+                break;
+            default:
+                log(`unknown effect ${e.do}`);
+            }
+        }
+    }
+
+    _later(fn) {
+        this._reg?.later(fn); // nothing once disabled
+    }
+
     // ---- settings ----------------------------------------------------------
 
-    get _count() {
-        return Math.max(1, Math.min(12, this._settings.get_int('workspaces-per-monitor')));
+    _onConfigChanged() {
+        this._apply(call('wsConfig', this._model, this._facts(), this._config()));
     }
 
     // Fixed workspaces (GNOME's dynamic ones would remove the empty parking
     // workspaces and renumber them) on every monitor. GNOME's own values are kept
-    // in our settings and put back by disable().
+    // in our settings and put back by disable(); the number is set by the core.
     _takeOverMutter() {
         const mutter = new Gio.Settings({schema_id: 'org.gnome.mutter'});
         const wmPrefs = new Gio.Settings({schema_id: 'org.gnome.desktop.wm.preferences'});
         if (this._settings.get_string('saved-gnome-settings') === '') {
-            this._settings.set_string('saved-gnome-settings', JSON.stringify({
+            this._settings.set_string('saved-gnome-settings', call('wsSavedGnome', {
                 dynamic: mutter.get_boolean('dynamic-workspaces'),
                 onlyOnPrimary: mutter.get_boolean('workspaces-only-on-primary'),
                 num: wmPrefs.get_int('num-workspaces'),
@@ -181,66 +268,41 @@ export default class NeroWorkspaces extends Extension {
         }
         mutter.set_boolean('dynamic-workspaces', false);
         mutter.set_boolean('workspaces-only-on-primary', false);
-        wmPrefs.set_int('num-workspaces', this._count + 1);
     }
 
     _giveBackMutter() {
         const text = this._settings.get_string('saved-gnome-settings');
         if (text === '')
             return; // nothing taken over
-        let saved = null;
+        let back;
         try {
-            saved = JSON.parse(text);
-        } catch {
-            log('saved GNOME workspace settings are damaged: putting back GNOME\'s defaults');
+            back = call('wsGiveBack', text);
+        } catch (e) {
+            // without the core GNOME still gets its defaults back
+            logError(e, '[nero-workspaces] reading the saved GNOME settings');
+            back = {dynamic: null, onlyOnPrimary: null, num: null, damaged: true};
         }
+        if (back.damaged)
+            log('saved GNOME workspace settings are damaged: putting back GNOME\'s defaults');
         const mutter = new Gio.Settings({schema_id: 'org.gnome.mutter'});
         const wmPrefs = new Gio.Settings({schema_id: 'org.gnome.desktop.wm.preferences'});
-        // A damaged or partial value must not leave GNOME on Nero's fixed
-        // workspaces: each missing or wrong field gets GNOME's default back.
-        const bool = (v, key, s) => (typeof v === 'boolean' ? s.set_boolean(key, v) : s.reset(key));
-        const num = saved?.num;
-        if (Number.isInteger(num) && num >= 1 && num <= 36)
-            wmPrefs.set_int('num-workspaces', num);
-        else
-            wmPrefs.reset('num-workspaces');
-        bool(saved?.onlyOnPrimary, 'workspaces-only-on-primary', mutter);
-        bool(saved?.dynamic, 'dynamic-workspaces', mutter);
+        // null = missing or wrong: GNOME's default
+        const put = (s, key, v, set) => (v === null ? s.reset(key) : set(key, v));
+        put(wmPrefs, 'num-workspaces', back.num, (k, v) => wmPrefs.set_int(k, v));
+        put(mutter, 'workspaces-only-on-primary', back.onlyOnPrimary, (k, v) => mutter.set_boolean(k, v));
+        put(mutter, 'dynamic-workspaces', back.dynamic, (k, v) => mutter.set_boolean(k, v));
         this._settings.set_string('saved-gnome-settings', '');
-    }
-
-    _onCountChanged() {
-        const count = this._count;
-        // Windows on workspaces that go away join the last one.
-        for (const [w, vw] of this._vw) {
-            if (vw >= count)
-                this._vw.set(w, count - 1);
-        }
-        for (const [c, cur] of this._current) {
-            if (cur >= count)
-                this._current.set(c, count - 1);
-        }
-        this._reconcileAll();
-        new Gio.Settings({schema_id: 'org.gnome.desktop.wm.preferences'}).set_int('num-workspaces', count + 1);
-        this._queueSave();
     }
 
     // ---- saved state (what each monitor shows) -----------------------------
 
-    _loadState() {
+    // The file text, or null; the core checks what is in it.
+    _loadStateText() {
         try {
             const [, bytes] = stateFile().load_contents(null);
-            const data = JSON.parse(new TextDecoder().decode(bytes));
-            // A hand-edited or damaged file must not leave a monitor on a
-            // workspace that does not exist (all its windows would be parked).
-            if (data?.version !== STATE_VERSION || typeof data.current !== 'object' || data.current === null)
-                return;
-            for (const [c, v] of Object.entries(data.current)) {
-                if (Number.isInteger(v) && v >= 0 && v < 12)
-                    this._current.set(c, v);
-            }
+            return new TextDecoder().decode(bytes);
         } catch {
-            // no state yet
+            return null; // no state yet
         }
     }
 
@@ -258,48 +320,51 @@ export default class NeroWorkspaces extends Extension {
             const file = stateFile();
             // same rights as nero-layout, which keeps window titles in this folder
             GLib.mkdir_with_parents(file.get_parent().get_path(), 0o700);
-            const data = {version: STATE_VERSION, current: Object.fromEntries(this._current)};
-            file.replace_contents(new TextEncoder().encode(`${JSON.stringify(data, null, 1)}\n`),
+            file.replace_contents(new TextEncoder().encode(call('wsStateText', this._model)),
                 null, false, Gio.FileCreateFlags.PRIVATE | Gio.FileCreateFlags.REPLACE_DESTINATION, null);
         } catch (e) {
             log(`could not save state: ${e}`);
         }
     }
 
-    _currentOf(monitor) {
-        const cur = this._current.get(connectorOf(monitor));
-        return Number.isInteger(cur) ? Math.max(0, Math.min(cur, this._count - 1)) : 0;
+    // For the shell tests: connector -> workspace shown, window -> virtual workspace.
+    get _current() {
+        return new Map(Object.entries(this._model?.current ?? {}));
+    }
+
+    get _vw() {
+        const vw = this._model?.vw ?? {};
+        return new Map([...this._ids].filter(([, id]) => id in vw).map(([w, id]) => [w, vw[id]]));
     }
 
     // ---- windows -----------------------------------------------------------
-
-    _later(fn) {
-        this._reg?.later(fn); // nothing once disabled
-    }
 
     _trackable(w) {
         return w && !w.is_override_redirect() && TRACKED_TYPES.has(w.get_window_type()) && !w.get_transient_for();
     }
 
     _track(w, fresh) {
-        // Windows on all workspaces are tracked too (left alone while they are):
-        // GNOME can take them off all workspaces later, without a new window.
-        if (this._vw.has(w) || !this._trackable(w))
+        if (this._ids.has(w) || !this._trackable(w))
             return;
         // the core call first: if it throws, nothing is connected (a later
         // _track would otherwise connect the signals a second time)
-        const real = w.get_workspace()?.index() ?? VISIBLE;
-        const vw = call('wsAdopt', real, this._currentOf(w.get_monitor()), this._count);
+        const id = this._nextId;
+        const out = call('wsTrack', this._model, this._facts([w, id]), id, fresh);
+        this._nextId++;
+        this._ids.set(w, id);
+        this._wins.set(id, w);
         this._winReg.connect(w, 'workspace-changed', () => this._onWorkspaceChanged(w));
         this._winReg.connect(w, 'unmanaged', () => this._untrack(w));
-        this._vw.set(w, vw);
-        if (fresh)
-            this._place(w);
+        this._apply(out);
     }
 
     _untrack(w) {
+        const id = this._ids.get(w);
         this._winReg.disconnectObject(w);
-        this._vw.delete(w);
+        this._ids.delete(w);
+        this._wins.delete(id);
+        if (this._model && id !== undefined)
+            this._model = call('wsUntrack', this._model, id);
     }
 
     _move(w, real) {
@@ -311,130 +376,41 @@ export default class NeroWorkspaces extends Extension {
         }
     }
 
-    // Put one window where its virtual workspace says.
-    _place(w) {
-        const vw = this._vw.get(w);
-        if (vw === undefined || w.is_on_all_workspaces())
-            return;
-        const real = call('wsRealFor', vw, this._currentOf(w.get_monitor()));
-        if (w.get_workspace()?.index() !== real)
-            this._move(w, real);
-    }
-
     _onWorkspaceChanged(w) {
-        if (this._moving)
+        if (this._moving || !this._ids.has(w))
             return;
-        const ws = w.get_workspace();
-        if (!ws) {
-            // now on all workspaces: GNOME keeps it on screen everywhere
-            return;
-        }
         // Moved by someone else (an app, the layout saver, the overview).
-        this._vw.set(w, call('wsAdopt', ws.index(), this._currentOf(w.get_monitor()), this._count));
-        this._later(() => this._place(w));
+        this._apply(call('wsWindowMoved', this._model, this._facts(), this._ids.get(w)));
     }
 
-    // A window that comes onto a monitor joins the workspace that monitor shows.
     _onMonitor(w) {
-        if (!this._vw.has(w) || this._moving)
+        if (!this._ids.has(w) || this._moving)
             return;
-        if (w.get_workspace()?.index() === VISIBLE)
-            this._vw.set(w, this._currentOf(w.get_monitor()));
-        else
-            this._later(() => this._place(w));
-    }
-
-    _readoptAll() {
-        for (const w of this._vw.keys()) {
-            const ws = w.get_workspace();
-            if (ws && !w.is_on_all_workspaces())
-                this._vw.set(w, call('wsAdopt', ws.index(), this._currentOf(w.get_monitor()), this._count));
-        }
-        this._reconcileAll();
-    }
-
-    _reconcileAll() {
-        for (const w of this._vw.keys())
-            this._place(w);
-    }
-
-    _windowsJson() {
-        let id = 0;
-        const byId = new Map();
-        const list = [];
-        for (const [w, vw] of this._vw) {
-            if (w.is_on_all_workspaces())
-                continue;
-            id++;
-            byId.set(id, w);
-            list.push({id, monitor: w.get_monitor(), vw, real: w.get_workspace()?.index() ?? VISIBLE});
-        }
-        return [list, byId];
+        this._apply(call('wsEnteredMonitor', this._model, this._facts(), this._ids.get(w)));
     }
 
     // ---- switching ---------------------------------------------------------
 
     switchMonitor(monitor, target, focusWindow = null) {
-        const count = this._count;
-        if (monitor < 0 || target < 0 || target >= count)
-            return;
-        const focused = global.display.focus_window;
-        const [list, byId] = this._windowsJson();
-        for (const m of call('wsPlanSwitch', list, monitor, target))
-            this._move(byId.get(m.id), m.real);
-        this._current.set(connectorOf(monitor), target);
-        this._queueSave();
-
-        const time = global.get_current_time();
-        if (focusWindow) {
-            Main.activateWindow(focusWindow, time);
-        } else if (focused && focused.get_monitor() === monitor) {
-            // Focus moves to the top window of the workspace that came in, if any.
-            const shown = global.display.sort_windows_by_stacking(
-                [...this._vw.keys()].filter(w => w.get_monitor() === monitor &&
-                    w.get_workspace()?.index() === VISIBLE && !w.minimized));
-            const top = shown[shown.length - 1];
-            if (top)
-                top.activate(time);
-        }
-        if (this._settings.get_boolean('show-osd')) {
-            Main.osdWindowManager.showOne(monitor, Gio.ThemedIcon.new('view-paged-symbolic'),
-                `${target + 1} / ${count}`);
-        }
+        const focus = focusWindow ? this._ids.get(focusWindow) ?? null : null;
+        this._apply(call('wsSwitch', this._model, this._facts(), monitor, target, focus));
     }
 
     stepMonitor(monitor, delta) {
-        const cur = this._currentOf(monitor);
-        const next = call('wsStep', cur, delta, this._count, this._settings.get_boolean('wrap-around'));
-        if (next !== cur)
-            this.switchMonitor(monitor, next);
+        this._apply(call('wsStepMonitor', this._model, this._facts(), monitor, delta));
     }
 
     // GNOME switched the real workspace (a parked window was activated, or the
-    // overview was used): show that workspace on the window's own monitor and
-    // go back to the visible workspace.
+    // overview was used): the core shows that workspace on the window's own
+    // monitor and goes back to the visible workspace.
     _onActiveChanged() {
         if (this._snapping)
             return;
         this._snapping = true;
         this._later(() => {
             this._snapping = false;
-            const wm = global.workspace_manager;
-            const idx = wm.get_active_workspace_index();
-            if (idx === VISIBLE)
-                return;
-            const fw = global.display.focus_window;
-            const owner = fw && this._vw.has(fw) && fw.get_workspace()?.index() === idx ? fw : null;
-            const monitor = owner ? owner.get_monitor() : global.display.get_current_monitor();
-            const target = call('wsAdopt', idx, this._currentOf(monitor), this._count);
-            const time = global.get_current_time();
-            this._moving++;
-            try {
-                wm.get_workspace_by_index(VISIBLE).activate(time);
-            } finally {
-                this._moving--;
-            }
-            this.switchMonitor(monitor, target, owner);
+            const idx = global.workspace_manager.get_active_workspace_index();
+            this._apply(call('wsActiveChanged', this._model, this._facts(), idx));
         });
     }
 
@@ -481,7 +457,8 @@ export default class NeroWorkspaces extends Extension {
                 name: 'Nero workspace swipe',
             });
         tracker.connect('begin', (t, monitor) => this._swipeBegin(t, monitor));
-        tracker.connect('end', (_t, _duration, endProgress) => this._swipeEnd(endProgress));
+        tracker.connect('end', (_t, _duration, endProgress) =>
+            this._apply(call('wsSwipeEnd', this._model, this._facts(), endProgress)));
         this._tracker = tracker;
     }
 
@@ -499,26 +476,14 @@ export default class NeroWorkspaces extends Extension {
     }
 
     _swipeBegin(tracker, monitor) {
-        if (monitor < 0)
-            monitor = global.display.get_current_monitor();
+        const begin = call('wsSwipeBegin', this._model, this._facts(), monitor);
+        this._model = begin.model;
         const wm = global.workspace_manager;
         tracker.orientation = wm.layout_rows !== -1 ? Clutter.Orientation.HORIZONTAL : Clutter.Orientation.VERTICAL;
-        const cur = this._currentOf(monitor);
-        this._swipeMonitor = monitor;
         // The page size: a swipe as wide as the monitor moves one workspace.
-        const geo = global.display.get_monitor_geometry(monitor);
+        const geo = global.display.get_monitor_geometry(begin.monitor);
         const distance = tracker.orientation === Clutter.Orientation.HORIZONTAL ? geo.width : geo.height;
-        tracker.confirmSwipe(distance, call('swipePoints', this._count), cur, cur);
-    }
-
-    _swipeEnd(endProgress) {
-        const monitor = this._swipeMonitor;
-        this._swipeMonitor = undefined;
-        if (monitor === undefined)
-            return;
-        const target = call('swipeTarget', endProgress, this._count);
-        if (target !== this._currentOf(monitor))
-            this.switchMonitor(monitor, target);
+        tracker.confirmSwipe(distance, begin.points, begin.current, begin.current);
     }
 
     // The scroll speed lives in a libinput plugin file (none at 100 %); Mutter
@@ -533,42 +498,27 @@ export default class NeroWorkspaces extends Extension {
 
     // ---- keys ----------------------------------------------------------------
 
+    _keys() {
+        const all = Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW;
+        return call('wsKeys').map(k => [k.name, k.overview ? all : Shell.ActionMode.NORMAL]);
+    }
+
     _bindKeys() {
-        for (const [name, mode] of KEYS)
+        this._boundKeys = this._keys(); // kept: unbinding must work even if the core no longer does
+        for (const [name, mode] of this._boundKeys)
             Main.wm.setCustomKeybindingHandler(name, mode, (d, w, e, b) => this._onKey(w, b));
     }
 
     _unbindKeys() {
-        for (const [name, mode] of KEYS)
+        for (const [name, mode] of this._boundKeys ?? [])
             Main.wm.setCustomKeybindingHandler(name, mode, Main.wm._showWorkspaceSwitcher.bind(Main.wm));
+        this._boundKeys = null;
     }
 
     _onKey(window, binding) {
-        const [action, , , target] = binding.get_name().split('-');
         const w = window ?? global.display.focus_window;
         const monitor = w ? w.get_monitor() : global.display.get_current_monitor();
-        const cur = this._currentOf(monitor);
-        const count = this._count;
-        const wrap = this._settings.get_boolean('wrap-around');
-        let next;
-        if (target === 'last')
-            next = count - 1;
-        else if (target === 'left' || target === 'up')
-            next = call('wsStep', cur, -1, count, wrap);
-        else if (target === 'right' || target === 'down')
-            next = call('wsStep', cur, 1, count, wrap);
-        else
-            next = Number(target) - 1;
-        if (!(next >= 0 && next < count))
-            return;
-        if (action === 'move') {
-            if (!w || !this._vw.has(w))
-                return;
-            this._vw.set(w, next);
-            this.switchMonitor(monitor, next, w);
-        } else if (next !== cur) {
-            this.switchMonitor(monitor, next);
-        }
+        this._apply(call('wsKey', this._model, this._facts(), binding.get_name(), monitor, this._ids.get(w) ?? null));
     }
 
     // ---- Dash to Panel scroll ----------------------------------------------
@@ -615,12 +565,11 @@ export default class NeroWorkspaces extends Extension {
             if (!actor || monitor === undefined)
                 continue;
             const entry = {actor, ids: []};
-            entry.ids.push(actor.connect('scroll-event', (_a, event) => this._onPanelScroll(actor, monitor, event)));
+            entry.ids.push(actor.connect('scroll-event', (_a, event) => this._onPanelScroll(monitor, event)));
             // Dash to Panel destroys its panels when it rebuilds them (or is
             // switched off): a destroyed panel must not be touched again.
             entry.ids.push(actor.connect('destroy', () => {
                 entry.ids = [];
-                this._scroll.delete(actor);
             }));
             this._panelSignals.push(entry);
         }
@@ -630,7 +579,8 @@ export default class NeroWorkspaces extends Extension {
         for (const {actor, ids} of this._panelSignals)
             ids.forEach(id => actor.disconnect(id));
         this._panelSignals = [];
-        this._scroll.clear();
+        if (this._model)
+            this._model = call('wsForgetPanels', this._model);
         if (this._dtp && this._dtpCreatedId)
             this._dtp.disconnect(this._dtpCreatedId);
         this._dtp = null;
@@ -645,21 +595,17 @@ export default class NeroWorkspaces extends Extension {
         }
     }
 
-    // Scroll over an app icon that cycles windows (or Dash to Panel's own
-    // workspace indicator) is not ours.
-    _ignoredSource(actor) {
-        const iconAction = this._dtpIconAction?.() ?? 'CYCLE_WINDOWS';
-        for (let a = actor; a; a = a.get_parent()) {
-            if (a._dtpIgnoreScroll || a.constructor?.name === 'WorkspaceIndicator')
-                return true;
-            if (/AppIcon/.test(a.constructor?.name ?? '') && iconAction !== 'PASS_THROUGH' && iconAction !== 'NOTHING')
-                return true;
-        }
-        return false;
+    // The actors from the scrolled one up to the stage, for the core to judge.
+    _actorChain(actor) {
+        const chain = [];
+        for (let a = actor; a; a = a.get_parent())
+            chain.push({name: a.constructor?.name ?? '', dtpIgnore: !!a._dtpIgnoreScroll});
+        return chain;
     }
 
-    _onPanelScroll(actor, monitor, event) {
-        if (this._ignoredSource(global.stage.get_event_actor(event)))
+    _onPanelScroll(monitor, event) {
+        const iconAction = this._dtpIconAction?.() ?? 'CYCLE_WINDOWS';
+        if (call('wsIgnoreScroll', this._actorChain(global.stage.get_event_actor(event)), iconAction))
             return Clutter.EVENT_PROPAGATE;
         let delta;
         let discrete = false;
@@ -668,8 +614,8 @@ export default class NeroWorkspaces extends Extension {
         if (dir === Clutter.ScrollDirection.SMOOTH) {
             const [dx, dy] = event.get_scroll_delta();
             delta = dy !== 0 ? dy : dx;
-            finished = (event.get_scroll_finish_flags() & Clutter.ScrollFinishFlags.VERTICAL) !== 0 ||
-                (event.get_scroll_finish_flags() & Clutter.ScrollFinishFlags.HORIZONTAL) !== 0;
+            const flags = event.get_scroll_finish_flags();
+            finished = (flags & (Clutter.ScrollFinishFlags.VERTICAL | Clutter.ScrollFinishFlags.HORIZONTAL)) !== 0;
         } else {
             // Wheels that also send smooth events send these as copies: skip them.
             if (event.is_pointer_emulated())
@@ -677,12 +623,8 @@ export default class NeroWorkspaces extends Extension {
             discrete = true;
             delta = dir === Clutter.ScrollDirection.UP || dir === Clutter.ScrollDirection.LEFT ? -1 : 1;
         }
-        const state = this._scroll.get(actor) ?? {acc: 0, lastStepMs: -1e9, lastEventMs: -1e9};
-        const res = call('wsScroll', state, {delta, discrete, nowMs: event.get_time(), finished},
-            this._settings.get_double('scroll-threshold'), this._settings.get_int('scroll-cooldown-ms'));
-        this._scroll.set(actor, res.state);
-        if (res.step)
-            this.stepMonitor(monitor, res.step);
+        this._apply(call('wsPanelScroll', this._model, this._facts(), monitor,
+            {delta, discrete, nowMs: event.get_time(), finished}));
         return Clutter.EVENT_STOP;
     }
 }

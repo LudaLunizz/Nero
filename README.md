@@ -20,6 +20,10 @@ move windows, so the extensions stay JS for the signals and window calls, and as
 Rust core where things go. The call is synchronous and in-process (no daemon, no D-Bus);
 a Rust panic becomes a JS exception and cannot take the shell down.
 
+The goal is Nero in Rust as far as GNOME allows: every decision and every piece of
+state in the core, with the JS only passing events in and carrying out what comes back.
+`nero-workspaces` is there already: its whole state machine is `core/src/ws_model.rs`.
+
 ## 0. Build the Rust core
 
 Needs Rust (edition 2024) with the WebAssembly target:
