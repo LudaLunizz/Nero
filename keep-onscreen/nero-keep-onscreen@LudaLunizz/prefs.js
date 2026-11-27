@@ -9,7 +9,7 @@ import Gdk from 'gi://Gdk';
 import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
-import {promptChoices} from './promptChoices.js';
+import {call} from './nero.js';
 
 const KEY = 'password-prompt-monitor';
 
@@ -49,7 +49,7 @@ export default class KeepOnScreenPrefs extends ExtensionPreferences {
         let values = [];
         let filling = false;
         const fill = () => {
-            const c = promptChoices(connectedMonitors(), settings.get_string(KEY));
+            const c = call('koPromptChoices', connectedMonitors(), settings.get_string(KEY));
             filling = true;
             model.splice(0, model.get_n_items(), c.labels);
             values = c.values;
