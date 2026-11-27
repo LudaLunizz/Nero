@@ -171,6 +171,25 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
             &arg::<Vec<(Rect, Rect)>>(a, 3, "partners")?,
             arg(a, 4, "reach")?,
         )),
+        "fitToWorkArea" => ok(crate::fit::fit_to_work_area(
+            &arg(a, 0, "frame")?,
+            &arg(a, 1, "workArea")?,
+        )),
+        "linkedFind" => ok(resize::find_linked(
+            &arg(a, 0, "drag")?,
+            opt(a, 1, "dragV", None)?,
+            opt(a, 2, "dragH", None)?,
+            &arg::<Vec<Rect>>(a, 3, "others")?,
+            &arg(a, 4, "gaps")?,
+        )),
+        "linkedSettle" => ok(resize::linked_settle(
+            &arg(a, 0, "dragStart")?,
+            &arg(a, 1, "dragActual")?,
+            opt(a, 2, "dragH", None)?,
+            opt(a, 3, "dragV", None)?,
+            &arg::<Vec<resize::SettleWin>>(a, 4, "entries")?,
+            &arg(a, 5, "gaps")?,
+        )),
         "wsInit" => ok(wm::start(
             opt::<Option<String>>(a, 0, "saved", None)?.as_deref(),
             arg(a, 1, "config")?,
