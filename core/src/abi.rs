@@ -89,10 +89,12 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
             arg(a, 4, "height")?,
             arg(a, 5, "maxPx")?,
         )),
-        "isAttached" => ok(lg::is_attached(
-            &arg::<Vec<lg::Tile>>(a, 0, "tiles")?,
-            &arg(a, 1, "chain")?,
-        )),
+        "isAttached" => {
+            let tiles: Vec<lg::Tile> = arg(a, 0, "tiles")?;
+            let chain: lg::Chain = arg(a, 1, "chain")?;
+            check_chain(&chain, tiles.len())?;
+            ok(lg::is_attached(&tiles, &chain))
+        }
         "toggleChain" => {
             // returns {result, groups}: the new groups of every tile
             let mut tiles: Vec<lg::Tile> = arg(a, 0, "tiles")?;
@@ -259,7 +261,11 @@ fn dispatch(f: &str, a: &[Value]) -> Res {
             opt::<Option<String>>(a, 3, "uptime", None)?.as_deref(),
         )),
         "lySave" => ok(lm::save(
-            arg(a, 0, "model")?,
+            // ids of all windows now (optional): closed ones are dropped from `claimed`
+            lm::forget_gone(
+                arg(a, 0, "model")?,
+                opt::<Option<Vec<u64>>>(a, 5, "ids", None)?.as_deref(),
+            ),
             &arg::<Vec<lm::SnapWin>>(a, 1, "windows")?,
             &arg(a, 2, "opts")?,
             arg(a, 3, "force")?,

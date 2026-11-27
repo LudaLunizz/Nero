@@ -235,7 +235,8 @@ pub fn open_space_at(p: Point, obstacles: &[Rect], area: &Rect) -> Rect {
             if o.right() <= p.x {
                 bx.l = js_max(bx.l, o.right());
             }
-            if o.x > p.x {
+            // an edge exactly at the pointer bounds the space too
+            if o.x >= p.x {
                 bx.r = js_min(bx.r, o.x);
             }
         }
@@ -248,7 +249,7 @@ pub fn open_space_at(p: Point, obstacles: &[Rect], area: &Rect) -> Rect {
             if o.bottom() <= p.y {
                 bx.t = js_max(bx.t, o.bottom());
             }
-            if o.y > p.y {
+            if o.y >= p.y {
                 bx.b = js_min(bx.b, o.y);
             }
         }

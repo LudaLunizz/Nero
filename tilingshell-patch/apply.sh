@@ -9,11 +9,20 @@ URL=https://github.com/domferr/tilingshell/releases/download/18.0/tilingshell@fe
 SHA=eb0540c0ca2f4b2d724b60db8a9d35a7712610c8fee6f2d38fe5b30810f93493
 UUID=tilingshell@ferrarodomenico.com
 mkdir -p build
-[ -f build/upstream-18.0.zip ] || curl -fL -o build/upstream-18.0.zip "$URL"
-echo "$SHA  build/upstream-18.0.zip" | sha256sum -c -
+if [ ! -f build/upstream-18.0.zip ]; then
+  # into a temp name first: a broken download never sits at the real name
+  curl -fL -o build/upstream-18.0.zip.part "$URL"
+  echo "$SHA  build/upstream-18.0.zip.part" | sha256sum -c -
+  mv build/upstream-18.0.zip.part build/upstream-18.0.zip
+fi
+if ! echo "$SHA  build/upstream-18.0.zip" | sha256sum -c -; then
+  rm -f build/upstream-18.0.zip   # the next run downloads it again
+  exit 1
+fi
 rm -rf "build/$UUID"; mkdir "build/$UUID"
 unzip -q build/upstream-18.0.zip -d "build/$UUID"
-patch -d "build/$UUID" -p1 --no-backup-if-mismatch < tilingshell-patch/tilingshell-18.0.patch
+# --fuzz=0: a hunk that does not fit exactly is an error, never applied in the wrong place
+patch -d "build/$UUID" -p1 --fuzz=0 --no-backup-if-mismatch < tilingshell-patch/tilingshell-18.0.patch
 glib-compile-schemas "build/$UUID/schemas"
 core/build.sh   # the Rust core (WebAssembly) + its loader into build/$UUID/utils
 echo "built build/$UUID"

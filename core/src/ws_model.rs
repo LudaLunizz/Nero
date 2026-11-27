@@ -392,7 +392,8 @@ pub fn disable(model: &Model, facts: &Facts) -> Vec<Effect> {
     facts
         .windows
         .iter()
-        .filter(|w| model.vw.contains_key(&w.id) && w.real != Some(VISIBLE))
+        // a window on all workspaces is never moved (that would unstick it)
+        .filter(|w| model.vw.contains_key(&w.id) && !w.on_all && w.real != Some(VISIBLE))
         .map(|w| Effect::Move {
             id: w.id,
             real: VISIBLE,

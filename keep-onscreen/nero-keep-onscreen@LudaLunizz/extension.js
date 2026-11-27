@@ -43,14 +43,24 @@ export default class KeepOnScreen extends Extension {
                 return orig.apply(this, args); // disabled, but another extension still calls us
             // The overlay is the dialog's lightbox; it fades in inside open(), so switch it off first.
             // The prompt still takes the keyboard until it is answered or cancelled.
+            // A core that fails (missing or old wasm) must never stop a password prompt
+            // from opening: then the prompt simply opens as GNOME has it.
             const name = this.constructor.name;
-            if (this._lightbox && call('koPromptBefore', name, settings.get_boolean('password-prompt-dim')))
-                this._lightbox.lightOn = () => {};
+            try {
+                if (this._lightbox && call('koPromptBefore', name, settings.get_boolean('password-prompt-dim')))
+                    this._lightbox.lightOn = () => {};
+            } catch (e) {
+                logError(e, 'nero-keep-onscreen: koPromptBefore');
+            }
             const ok = orig.apply(this, args);
             if (ok) {
-                const idx = call('koPromptAfter', name, monitorForConnector(settings.get_string('password-prompt-monitor')));
-                if (idx !== null)
-                    this._monitorConstraint.index = idx;
+                try {
+                    const idx = call('koPromptAfter', name, monitorForConnector(settings.get_string('password-prompt-monitor')));
+                    if (idx !== null)
+                        this._monitorConstraint.index = idx;
+                } catch (e) {
+                    logError(e, 'nero-keep-onscreen: koPromptAfter');
+                }
             }
             return ok;
         };
@@ -58,12 +68,18 @@ export default class KeepOnScreen extends Extension {
             const actor = window.get_compositor_private();
             if (!actor)
                 return;
-            const id = actor.connect('first-frame', () => {
+            const forget = () => {
                 this._frameIds.delete(actor);
                 actor.disconnect(id);
+                actor.disconnect(destroyId);
+            };
+            const id = actor.connect('first-frame', () => {
+                forget();
                 fit(window);
             });
-            this._frameIds.set(actor, id);
+            // closed before its first frame: nothing left to disconnect in disable()
+            const destroyId = actor.connect('destroy', forget);
+            this._frameIds.set(actor, [id, destroyId]);
         });
     }
 
@@ -80,9 +96,10 @@ export default class KeepOnScreen extends Extension {
             console.warn('[nero-keep-onscreen] another extension replaced ModalDialog.open after us: left as it is');
         this._open = null;
         this._patched = null;
-        for (const [actor, id] of this._frameIds) {
+        for (const [actor, ids] of this._frameIds) {
             try {
-                actor.disconnect(id);
+                for (const id of ids)
+                    actor.disconnect(id);
             } catch {
                 // actor already gone
             }

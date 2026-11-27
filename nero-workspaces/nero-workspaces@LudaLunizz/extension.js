@@ -71,6 +71,8 @@ export default class NeroWorkspaces extends Extension {
         this._reg = new Registry({tag: 'nero-workspaces', later: {add: laterAdd, remove: laterRemove}});
         this._moving = 0;
         this._saveId = 0;
+        // a later cancelled by an earlier disable() never cleared it
+        this._snapping = false;
         // GNOME Shell does not call disable() when enable() throws: undo what was
         // done so far ourselves, or GNOME's workspace settings, keys and swipe
         // would stay taken over by an extension that is not running.
@@ -100,12 +102,21 @@ export default class NeroWorkspaces extends Extension {
         const display = global.display;
         const wm = global.workspace_manager;
         const reg = this._reg;
-        reg.connect(display, 'window-created', (_d, w) => this._later(() => this._track(w, true)));
+        reg.connect(display, 'window-created', (_d, w) => this._later(() => {
+            // closed before this later ran (a splash screen): its 'unmanaged' is past
+            if (global.display.list_all_windows().includes(w))
+                this._track(w, true);
+        }));
         reg.connect(display, 'window-entered-monitor', (_d, _m, w) => this._onMonitor(w));
         reg.connect(wm, 'active-workspace-changed', () => this._onActiveChanged());
         for (const key of CONFIG_KEYS)
             reg.connect(this._settings, `changed::${key}`, () => this._onConfigChanged());
         reg.connect(this._settings, 'changed::three-finger-swipe', () => this._setupSwipe());
+        reg.connect(this._settings, 'changed::take-over-panel-scroll', () => {
+            if (!this._settings.get_boolean('take-over-panel-scroll'))
+                this._giveBackDtpScroll();
+            this._hookPanels();
+        });
         reg.connect(this._settings, 'changed::touchpad-scroll-speed', () => this._writeScrollPlugin());
         reg.connect(global.backend.get_monitor_manager(), 'monitors-changed',
             () => this._later(() => this._apply(call('wsReconcile', this._model, this._facts()))));
@@ -476,7 +487,15 @@ export default class NeroWorkspaces extends Extension {
     }
 
     _swipeBegin(tracker, monitor) {
-        const begin = call('wsSwipeBegin', this._model, this._facts(), monitor);
+        let begin;
+        try {
+            begin = call('wsSwipeBegin', this._model, this._facts(), monitor);
+        } catch (e) {
+            // the tracker waits for confirmSwipe: give it a swipe that goes nowhere
+            logError(e, '[nero-workspaces] swipe begin');
+            tracker.confirmSwipe(1, [0], 0, 0);
+            return;
+        }
         this._model = begin.model;
         const wm = global.workspace_manager;
         tracker.orientation = wm.layout_rows !== -1 ? Clutter.Orientation.HORIZONTAL : Clutter.Orientation.VERTICAL;
@@ -579,20 +598,33 @@ export default class NeroWorkspaces extends Extension {
         for (const {actor, ids} of this._panelSignals)
             ids.forEach(id => actor.disconnect(id));
         this._panelSignals = [];
-        if (this._model)
-            this._model = call('wsForgetPanels', this._model);
-        if (this._dtp && this._dtpCreatedId)
-            this._dtp.disconnect(this._dtpCreatedId);
+        // disable() goes on after this: a throw here must not leave the keys,
+        // the swipe and the parked windows taken over
+        try {
+            if (this._model)
+                this._model = call('wsForgetPanels', this._model);
+        } catch (e) {
+            logError(e, '[nero-workspaces] forgetting the panels');
+        }
+        try {
+            if (this._dtp && this._dtpCreatedId)
+                this._dtp.disconnect(this._dtpCreatedId);
+        } catch {
+            // Dash to Panel already dropped its handlers (it was switched off)
+        }
         this._dtp = null;
         this._dtpCreatedId = 0;
-        if (this._settings && !this._reg) {
-            // disabling: give Dash to Panel its scroll action back
-            const saved = this._settings.get_string('saved-dtp-scroll');
-            const s = saved ? this._dtpSettings() : null;
-            if (s && s.get_string('scroll-panel-action') === 'NOTHING')
-                s.set_string('scroll-panel-action', saved);
-            this._settings.set_string('saved-dtp-scroll', '');
-        }
+        if (this._settings && !this._reg)
+            this._giveBackDtpScroll(); // disabling
+    }
+
+    // Dash to Panel gets its own panel scroll action back.
+    _giveBackDtpScroll() {
+        const saved = this._settings.get_string('saved-dtp-scroll');
+        const s = saved ? this._dtpSettings() : null;
+        if (s && s.get_string('scroll-panel-action') === 'NOTHING')
+            s.set_string('scroll-panel-action', saved);
+        this._settings.set_string('saved-dtp-scroll', '');
     }
 
     // The actors from the scrolled one up to the stage, for the core to judge.

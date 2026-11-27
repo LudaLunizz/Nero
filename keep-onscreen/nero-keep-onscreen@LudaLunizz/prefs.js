@@ -49,7 +49,17 @@ export default class KeepOnScreenPrefs extends ExtensionPreferences {
         let values = [];
         let filling = false;
         const fill = () => {
-            const c = call('koPromptChoices', connectedMonitors(), settings.get_string(KEY));
+            let c;
+            try {
+                c = call('koPromptChoices', connectedMonitors(), settings.get_string(KEY));
+            } catch (e) {
+                // a broken core: the page still opens, with the setting as it is
+                logError(e, 'nero-keep-onscreen prefs');
+                const saved = settings.get_string(KEY);
+                c = saved
+                    ? {labels: ['Under the pointer (GNOME default)', saved], values: ['', saved], selected: 1}
+                    : {labels: ['Under the pointer (GNOME default)'], values: [''], selected: 0};
+            }
             filling = true;
             model.splice(0, model.get_n_items(), c.labels);
             values = c.values;

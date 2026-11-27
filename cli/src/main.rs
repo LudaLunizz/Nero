@@ -4,7 +4,7 @@
 //!
 //!   nero sysmon [refresh]                   the Argos system monitor (what Argos runs every second)
 //!   nero taskbar setup [--monitor CONNECTOR]   Windows-like taskbar, system monitor, Argos buttons
-//!   nero taskbar undo                       put back the Dash to Panel settings of the last setup
+//!   nero taskbar undo                       put back what the setup changed
 
 mod sysmon;
 mod taskbar;
@@ -15,7 +15,8 @@ const HELP: &str = "nero: Nero's command line tool
   nero taskbar setup [--monitor CONNECTOR]   Dash to Panel at the bottom of every monitor, the
                                              system monitor in Argos, and (with --monitor, e.g.
                                              DP-1) the Argos buttons on that monitor's taskbar
-  nero taskbar undo                          load the Dash to Panel settings saved by the last setup
+  nero taskbar undo                          put back what setup changed (Dash to Panel settings,
+                                             Ubuntu Dock, the Argos script, the split extension)
   nero --version
 
 Needs Dash to Panel (and Argos for the system monitor) from extensions.gnome.org.";

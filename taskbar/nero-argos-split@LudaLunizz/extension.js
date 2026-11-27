@@ -12,15 +12,24 @@ export default class NeroArgosSplit extends Extension {
         this._boxId = 0;
         this._settingsId = this._settings.connect('changed::monitor', () => {
             this._restore();
-            this._sync();
+            this._trySync();
         });
         // Argos and Dash to Panel load in an unknown order and Dash to Panel
         // rebuilds its panels on setting/monitor changes, so retry on a timer.
         this._timeout = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
-            this._sync();
+            this._trySync();
             return GLib.SOURCE_CONTINUE;
         });
-        this._sync();
+        this._trySync();
+    }
+
+    // A throw (a Dash to Panel update changed its insides) must not end the timer.
+    _trySync() {
+        try {
+            this._sync();
+        } catch (e) {
+            logError(e, 'nero-argos-split');
+        }
     }
 
     disable() {
@@ -60,29 +69,38 @@ export default class NeroArgosSplit extends Extension {
             // buttons home first; the timer then moves them into the new panel.
             this._boxId = box.connect('destroy', () => this._restore());
         }
+        // the buttons keep their order: the k-th Argos button goes to place k
+        let at = 0;
         for (const [name, button] of Object.entries(Main.panel.statusArea)) {
             if (!name.startsWith('argos-button-')) continue;
             const container = button.container;
-            if (!container || container.get_parent() === box) continue;
+            if (!container) continue;
+            if (container.get_parent() === box) {
+                at++;
+                continue;
+            }
             const old = container.get_parent();
             if (!this._moved.has(container)) {
                 // Argos destroys its buttons on disable or script change; touching a
                 // destroyed one from disable() can crash gnome-shell, so forget it.
                 const id = container.connect('destroy', () => this._moved.delete(container));
-                this._moved.set(container, [old ?? Main.panel._rightBox, id]);
+                const index = old ? old.get_children().indexOf(container) : 0;
+                this._moved.set(container, [old ?? Main.panel._rightBox, id, Math.max(index, 0)]);
             }
             old?.remove_child(container);
-            box.insert_child_at_index(container, 0);
+            box.insert_child_at_index(container, at++);
         }
     }
 
-    // Put every moved button back into the main panel box it came from.
+    // Put every moved button back into the main panel box it came from, at its old
+    // place (lowest first, so each index means what it meant before the move).
     _restore() {
         this._forgetBox();
-        for (const [container, [parent, id]] of this._moved) {
+        const moved = [...this._moved].sort((a, b) => a[1][2] - b[1][2]);
+        for (const [container, [parent, id, index]] of moved) {
             container.disconnect(id);
             container.get_parent()?.remove_child(container);
-            parent.insert_child_at_index(container, 0);
+            parent.insert_child_at_index(container, index);
         }
         this._moved.clear();
     }
