@@ -3,15 +3,49 @@
 //! `components/tilingsystem/resizeManager.js`.
 
 use crate::{Rect, js_max, js_min};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Side {
     Left,
     Right,
     Top,
     Bottom,
+}
+
+impl Side {
+    pub fn opposite(self) -> Side {
+        match self {
+            Side::Left => Side::Right,
+            Side::Right => Side::Left,
+            Side::Top => Side::Bottom,
+            Side::Bottom => Side::Top,
+        }
+    }
+}
+
+/// The inner gaps of the layout, in px.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+pub struct Gaps {
+    pub top: f64,
+    pub bottom: f64,
+    pub left: f64,
+    pub right: f64,
+}
+
+/// How far from a window's `side` edge a neighbour may sit and still be linked:
+/// the gap on that side plus four times the right gap as error margin (a gap of
+/// 0 counts as 2, so windows without gaps still link).
+pub fn reach(gaps: &Gaps, side: Side) -> f64 {
+    let g = |v: f64| if v == 0.0 { 2.0 } else { v };
+    let own = match side {
+        Side::Top => gaps.top,
+        Side::Bottom => gaps.bottom,
+        Side::Left => gaps.left,
+        Side::Right => gaps.right,
+    };
+    g(own) + g(gaps.right) * 4.0
 }
 
 /// Does o touch w's `side` edge? A gap up to `reach` px counts, and so does a
@@ -198,4 +232,157 @@ pub fn clamp_edge(
         }
     }
     r
+}
+
+/// A window that moves along with the dragged one: its index in the list that was
+/// given, and which of its edges moves (None = that direction stays).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct Linked {
+    pub i: usize,
+    pub v: Option<Side>,
+    pub h: Option<Side>,
+}
+
+/// The windows reached from `rect` over its `side` edge: the ones touching it,
+/// the ones beside it on the same line (collinear), and, from each of those,
+/// whatever follows on. `remaining` is what is still free to take.
+fn find_adjacent(
+    rect: &Rect,
+    side: Side,
+    remaining: &[usize],
+    others: &[Rect],
+    gaps: &Gaps,
+) -> Vec<(usize, Side)> {
+    let reach = reach(gaps, side);
+    let opposite = side.opposite();
+    let (mut result, mut touching, mut collinear, mut rest) = (vec![], vec![], vec![], vec![]);
+    for &i in remaining {
+        if is_adjacent(rect, &others[i], side, reach) {
+            result.push((i, opposite));
+            touching.push(i);
+        } else if is_collinear(rect, &others[i], side, reach) {
+            result.push((i, side));
+            collinear.push(i);
+        } else {
+            rest.push(i);
+        }
+    }
+    for (list, next) in [(touching, opposite), (collinear, side)] {
+        for i in list {
+            for (j, s) in find_adjacent(&others[i], next, &rest, others, gaps) {
+                result.push((j, s));
+                rest.retain(|&x| x != j);
+            }
+        }
+    }
+    result
+}
+
+/// Ctrl-resize: every window (of `others`) that moves along when the dragged
+/// window's `drag_v` / `drag_h` edge moves, with the edge of it that moves.
+pub fn find_linked(
+    drag: &Rect,
+    drag_v: Option<Side>,
+    drag_h: Option<Side>,
+    others: &[Rect],
+    gaps: &Gaps,
+) -> Vec<Linked> {
+    let all: Vec<usize> = (0..others.len()).collect();
+    let mut out: Vec<Linked> = vec![];
+    if let Some(side) = drag_v {
+        for (i, s) in find_adjacent(drag, side, &all, others, gaps) {
+            out.push(Linked {
+                i,
+                v: Some(s),
+                h: None,
+            });
+        }
+    }
+    if let Some(side) = drag_h {
+        for (i, s) in find_adjacent(drag, side, &all, others, gaps) {
+            match out.iter_mut().find(|l| l.i == i) {
+                Some(l) => l.h = Some(s),
+                None => out.push(Linked {
+                    i,
+                    v: None,
+                    h: Some(s),
+                }),
+            }
+        }
+    }
+    out
+}
+
+/// One linked window at settle time: where it was at grab start, where it is
+/// now, which of its edges moves, and whether it is gone.
+#[derive(Clone, Copy, Debug, Deserialize)]
+pub struct SettleWin {
+    pub start: Rect,
+    pub actual: Rect,
+    pub h: Option<Side>,
+    pub v: Option<Side>,
+    #[serde(default)]
+    pub gone: bool,
+}
+
+/// A window to put back: `i` is the index in the settle list, -1 for the
+/// dragged window itself.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct Put {
+    pub i: i64,
+    pub rect: Rect,
+}
+
+fn differs(a: &Rect, b: &Rect) -> bool {
+    (a.x - b.x).abs() > 1.0
+        || (a.y - b.y).abs() > 1.0
+        || (a.width - b.width).abs() > 1.0
+        || (a.height - b.height).abs() > 1.0
+}
+
+/// After the grab: the dragged window (and the windows whose edge moved along
+/// with it) may not reach further than the windows on the other side of the
+/// line could give way (see `clamp_edge`). Returns the windows to put back.
+pub fn linked_settle(
+    drag_start: &Rect,
+    drag_actual: &Rect,
+    drag_h: Option<Side>,
+    drag_v: Option<Side>,
+    entries: &[SettleWin],
+    gaps: &Gaps,
+) -> Vec<Put> {
+    // (index, start, actual, h, v)
+    let mut movers = vec![(-1i64, *drag_start, *drag_actual, drag_h, drag_v)];
+    for (i, e) in entries.iter().enumerate() {
+        if e.gone {
+            continue;
+        }
+        let h = e.h.filter(|s| Some(*s) == drag_h);
+        let v = e.v.filter(|s| Some(*s) == drag_v);
+        if h.is_some() || v.is_some() {
+            movers.push((i as i64, e.start, e.actual, h, v));
+        }
+    }
+    let mut out = vec![];
+    for (idx, start, actual, h, v) in movers {
+        let mut r = actual;
+        for side in [h, v].into_iter().flatten() {
+            let opposite = side.opposite();
+            let partners: Vec<(Rect, Rect)> = entries
+                .iter()
+                .enumerate()
+                .filter(|(i, e)| {
+                    !e.gone && *i as i64 != idx && (e.h == Some(opposite) || e.v == Some(opposite))
+                })
+                .map(|(_, e)| (e.start, e.actual))
+                .collect();
+            if !partners.is_empty() {
+                r = clamp_edge(&start, &r, side, &partners, reach(gaps, side));
+            }
+        }
+        if differs(&r, &actual) {
+            out.push(Put { i: idx, rect: r });
+        }
+    }
+    out
 }

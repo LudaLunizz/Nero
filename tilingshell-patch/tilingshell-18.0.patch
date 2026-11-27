@@ -1,6 +1,6 @@
 diff -ruN a/components/editor/layoutEditor.js b/components/editor/layoutEditor.js
 --- a/components/editor/layoutEditor.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/editor/layoutEditor.js	2026-11-26 20:39:16.417512037 +0100
++++ b/components/editor/layoutEditor.js	2026-11-27 16:58:58.306983994 +0100
 @@ -1,5 +1,5 @@
  import { registerGObjectClass } from "../../utils/gjs.js";
 -import { GObject, St, Clutter, Shell } from "../../gi/ext.js";
@@ -129,7 +129,7 @@ diff -ruN a/components/editor/layoutEditor.js b/components/editor/layoutEditor.j
      this._sliders = [];
 diff -ruN a/components/layout/lineGroups.js b/components/layout/lineGroups.js
 --- a/components/layout/lineGroups.js	1970-01-01 01:00:00.000000000 +0100
-+++ b/components/layout/lineGroups.js	2026-11-26 20:39:16.417554736 +0100
++++ b/components/layout/lineGroups.js	2026-11-27 16:58:58.307056444 +0100
 @@ -0,0 +1,60 @@
 +// Local patch (2026-11-18): line groups for the layout editor. A "line" is one
 +// tile edge shared by tiles on both sides; tiles sharing a group id belong to
@@ -193,7 +193,7 @@ diff -ruN a/components/layout/lineGroups.js b/components/layout/lineGroups.js
 +}
 diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tilePreview.js
 --- a/components/tilepreview/tilePreview.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilepreview/tilePreview.js	2026-11-26 20:39:16.417991633 +0100
++++ b/components/tilepreview/tilePreview.js	2026-11-27 16:58:58.307819917 +0100
 @@ -87,20 +87,23 @@
      this._showing = true;
      this.show();
@@ -224,17 +224,17 @@ diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tileP
        });
 diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/resizeManager.js
 --- a/components/tilingsystem/resizeManager.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilingsystem/resizeManager.js	2026-11-26 23:35:50.613292508 +0100
-@@ -1,12 +1,27 @@
++++ b/components/tilingsystem/resizeManager.js	2026-11-27 16:58:58.307890386 +0100
+@@ -1,12 +1,26 @@
 -import { St, Meta } from "../../gi/ext.js";
 +import { St, Meta, Clutter, GLib } from "../../gi/ext.js";
  import SignalHandling from "../../utils/signalHandling.js";
  import Settings from "../../settings/settings.js";
  import { getWindows } from "../../utils/ui.js";
  
-+// Local patch: isAdjacent / isCollinear (Ctrl-linked resize) are Rust now, in
-+// Nero's core/src/resize.rs; see utils/freeSpace.js.
-+import { isAdjacent, isCollinear, linkedRect, linkedMin, clampEdge } from "../../utils/freeSpace.js";
++// Local patch: the Ctrl-linked resize logic (which windows are linked, where they
++// go, what to put back) is Rust now, in Nero's core/src/resize.rs; see utils/freeSpace.js.
++import { linkedFind, linkedSettle, linkedRect, linkedMin } from "../../utils/freeSpace.js";
 +
 +// Local patch 2026-11-26: during a Ctrl-resize only the touching edges move. A
 +// linked window that cannot shrink further (Brave stops at 500 px) used to keep
@@ -242,7 +242,6 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
 +// windows beyond it. Now its far edge stays put, and after the grab the dragged
 +// window is pulled back to the edge the neighbour could reach.
 +const SIDE_NAME = { [St.Side.TOP]: "top", [St.Side.BOTTOM]: "bottom", [St.Side.LEFT]: "left", [St.Side.RIGHT]: "right" };
-+const OPPOSITE_NAME = { left: "right", right: "left", top: "bottom", bottom: "top" };
 +const plain = (r) => ({ x: r.x, y: r.y, width: r.width, height: r.height });
 +const differs = (a, b) => Math.abs(a.x - b.x) > 1 || Math.abs(a.y - b.y) > 1 || Math.abs(a.width - b.width) > 1 || Math.abs(a.height - b.height) > 1;
 +
@@ -254,7 +253,7 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
    }
  
    enable() {
-@@ -18,6 +33,8 @@
+@@ -18,6 +32,8 @@
        (_display, window, grabOp) => {
          const moving = grabOp === Meta.GrabOp.KEYBOARD_MOVING || grabOp === Meta.GrabOp.MOVING;
          if (moving || !Settings.RESIZE_COMPLEMENTING_WINDOWS) return;
@@ -263,7 +262,7 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
          this._onWindowResizingBegin(window, grabOp & ~1024);
        }
      );
-@@ -33,12 +50,31 @@
+@@ -33,12 +49,31 @@
    }
  
    destroy() {
@@ -296,32 +295,69 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
      const verticalSide = [false, 0];
      const horizontalSide = [false, 0];
      switch (grabOp) {
-@@ -83,7 +119,7 @@
+@@ -82,184 +117,107 @@
+         break;
      }
      if (!verticalSide[0] && !horizontalSide[0]) return;
-     const otherTiledWindows = getWindows().filter(
+-    const otherTiledWindows = getWindows().filter(
 -      (otherWindow) => otherWindow && otherWindow.assignedTile && otherWindow !== window && !otherWindow.minimized
++    const others = getWindows().filter(
 +      (otherWindow) => otherWindow && otherWindow !== window && !otherWindow.minimized && otherWindow.get_window_type() === Meta.WindowType.NORMAL && otherWindow.get_monitor() === window.get_monitor() && !otherWindow.maximizedHorizontally && !otherWindow.maximizedVertically && !otherWindow.is_fullscreen()
      );
-     if (otherTiledWindows.length === 0) return;
-     const verticalAdjacentWindows = verticalSide[0] ? this._findAdjacent(
-@@ -122,19 +158,43 @@
-         ]);
-       }
-     });
--    const windowsToResize = Array.from(windowsMap.values());
--    this._signals.connect(
-+    const windowsToResize = Array.from(windowsMap.values()).map(([win, start, v, h]) => ({
-+      win,
-+      start: plain(start),
-+      v: v === -1 ? null : SIDE_NAME[v],
-+      h: h === -1 ? null : SIDE_NAME[h],
+-    if (otherTiledWindows.length === 0) return;
+-    const verticalAdjacentWindows = verticalSide[0] ? this._findAdjacent(
+-      window,
+-      verticalSide[1],
+-      new Set(otherTiledWindows)
+-    ) : [];
+-    const horizontalAdjacentWindows = horizontalSide[0] ? this._findAdjacent(
++    if (others.length === 0) return;
++    const dragV = verticalSide[0] ? SIDE_NAME[verticalSide[1]] : null;
++    const dragH = horizontalSide[0] ? SIDE_NAME[horizontalSide[1]] : null;
++    const gaps = Settings.get_inner_gaps();
++    const windowsToResize = linkedFind(window.get_frame_rect(), dragV, dragH, others.map((o) => o.get_frame_rect()), gaps).map(({ i, v, h }) => ({
++      win: others[i],
++      start: plain(others[i].get_frame_rect()),
++      v,
++      h,
 +      min: { width: 0, height: 0 },
 +      want: null
 +    }));
 +    const startingRect = plain(window.get_frame_rect());
 +    const g = {
        window,
+-      horizontalSide[1],
+-      new Set(otherTiledWindows)
+-    ) : [];
+-    const windowsMap = /* @__PURE__ */ new Map();
+-    verticalAdjacentWindows.forEach(([otherWin, sideOtherWin]) => {
+-      windowsMap.set(otherWin, [
+-        otherWin,
+-        otherWin.get_frame_rect().copy(),
+-        sideOtherWin,
+-        // resize vertically
+-        -1
+-        // resize horizontally
+-      ]);
+-    });
+-    horizontalAdjacentWindows.forEach(([otherWin, sideOtherWin]) => {
+-      const val = windowsMap.get(otherWin);
+-      if (val) {
+-        val[3] = sideOtherWin;
+-      } else {
+-        windowsMap.set(otherWin, [
+-          otherWin,
+-          otherWin.get_frame_rect().copy(),
+-          -1,
+-          // resize vertically
+-          sideOtherWin
+-          // resize horizontally
+-        ]);
+-      }
+-    });
+-    const windowsToResize = Array.from(windowsMap.values());
+-    this._signals.connect(
+-      window,
 -      "size-changed",
 -      this._onResizingWindow.bind(
 -        this,
@@ -332,45 +368,52 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
 -        windowsToResize
 -      )
 -    );
-+      start: startingRect,
-+      dragV: verticalSide[0] ? SIDE_NAME[verticalSide[1]] : null,
-+      dragH: horizontalSide[0] ? SIDE_NAME[horizontalSide[1]] : null,
-+      reachV: verticalSide[0] ? this._reach(verticalSide[1]) : 0,
-+      reachH: horizontalSide[0] ? this._reach(horizontalSide[1]) : 0,
-+      entries: windowsToResize,
-+      delta: { x: 0, y: 0, width: 0, height: 0 },
-+      timers: [],
-+      handlers: []
-+    };
-+    this._grab = g;
-+    windowsToResize.forEach((e) => {
-+      const onChange = () => this._onLinkedChanged(g, e);
-+      g.handlers.push([e.win, e.win.connect("size-changed", onChange)]);
-+      g.handlers.push([e.win, e.win.connect("position-changed", onChange)]);
-+      g.handlers.push([e.win, e.win.connect("unmanaged", () => (e.gone = true))]);
-+    });
-+    g.handlers.push([window, window.connect("unmanaged", () => (g.gone = true))]);
-+    this._signals.connect(window, "size-changed", () => this._onResizingWindow(g));
-+  }
-+
-+  _reach(side) {
-+    const gaps = Settings.get_inner_gaps();
-+    const gap = (v) => (v === 0 ? 2 : v);
-+    const own = { [St.Side.TOP]: gaps.top, [St.Side.BOTTOM]: gaps.bottom, [St.Side.LEFT]: gaps.left, [St.Side.RIGHT]: gaps.right }[side];
-+    return gap(own) + gap(gaps.right) * 4;
-   }
- 
-   _oppositeSide(side) {
-@@ -180,26 +240,19 @@
-     }
-     const oppositeSide = this._oppositeSide(side);
-     const newRemainingWindows = /* @__PURE__ */ new Set();
-+    const collinearWindows = [];
-+    // Local patch 2026-11-21: a neighbour that overlaps a little (an app that
-+    // cannot shrink to its frame) counts as adjacent too, see isAdjacent.
-+    const sideName = { [St.Side.TOP]: "top", [St.Side.BOTTOM]: "bottom", [St.Side.LEFT]: "left", [St.Side.RIGHT]: "right" }[side];
-+    const reach = side === St.Side.TOP || side === St.Side.BOTTOM ? borderRect.height : borderRect.width;
-     remainingWindows.forEach((otherWin) => {
+-  }
+-
+-  _oppositeSide(side) {
+-    switch (side) {
+-      case St.Side.TOP:
+-        return St.Side.BOTTOM;
+-      case St.Side.BOTTOM:
+-        return St.Side.TOP;
+-      case St.Side.LEFT:
+-        return St.Side.RIGHT;
+-    }
+-    return St.Side.LEFT;
+-  }
+-
+-  _findAdjacent(window, side, remainingWindows) {
+-    const result = [];
+-    const adjacentWindows = [];
+-    const windowRect = window.get_frame_rect();
+-    const borderRect = windowRect.copy();
+-    const innerGaps = Settings.get_inner_gaps();
+-    if (innerGaps.top === 0) innerGaps.top = 2;
+-    if (innerGaps.bottom === 0) innerGaps.bottom = 2;
+-    if (innerGaps.left === 0) innerGaps.left = 2;
+-    if (innerGaps.right === 0) innerGaps.right = 2;
+-    const errorFactor = innerGaps.right * 4;
+-    switch (side) {
+-      case St.Side.TOP:
+-        borderRect.height = innerGaps.top + errorFactor;
+-        borderRect.y -= innerGaps.top + errorFactor;
+-        break;
+-      case St.Side.BOTTOM:
+-        borderRect.y += borderRect.height;
+-        borderRect.height = innerGaps.bottom + errorFactor;
+-        break;
+-      case St.Side.LEFT:
+-        borderRect.width = innerGaps.left + errorFactor;
+-        borderRect.x -= innerGaps.left + errorFactor;
+-        break;
+-      case St.Side.RIGHT:
+-        borderRect.x += borderRect.width;
+-        borderRect.width = innerGaps.right + errorFactor;
+-        break;
+-    }
+-    const oppositeSide = this._oppositeSide(side);
+-    const newRemainingWindows = /* @__PURE__ */ new Set();
+-    remainingWindows.forEach((otherWin) => {
 -      const otherWinRect = otherWin.get_frame_rect();
 -      let [hasIntersection, intersection] = otherWin.get_frame_rect().intersect(borderRect);
 -      switch (side) {
@@ -387,28 +430,41 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
 -          hasIntersection && (hasIntersection = intersection.y + intersection.height >= otherWinRect.y + otherWinRect.height);
 -          break;
 -      }
-+      const hasIntersection = isAdjacent(windowRect, otherWin.get_frame_rect(), sideName, reach);
-       if (hasIntersection) {
-         result.push([otherWin, oppositeSide]);
-         adjacentWindows.push(otherWin);
-+      } else if (isCollinear(windowRect, otherWin.get_frame_rect(), sideName, reach)) {
-+        result.push([otherWin, side]);
-+        collinearWindows.push(otherWin);
-       } else {
-         newRemainingWindows.add(otherWin);
-       }
-@@ -214,52 +267,87 @@
-         newRemainingWindows.delete(recursionResult[0]);
-       });
+-      if (hasIntersection) {
+-        result.push([otherWin, oppositeSide]);
+-        adjacentWindows.push(otherWin);
+-      } else {
+-        newRemainingWindows.add(otherWin);
+-      }
+-    });
+-    adjacentWindows.forEach((otherWin) => {
+-      this._findAdjacent(
+-        otherWin,
+-        oppositeSide,
+-        newRemainingWindows
+-      ).forEach((recursionResult) => {
+-        result.push(recursionResult);
+-        newRemainingWindows.delete(recursionResult[0]);
+-      });
++      start: startingRect,
++      dragV,
++      dragH,
++      gaps,
++      entries: windowsToResize,
++      delta: { x: 0, y: 0, width: 0, height: 0 },
++      timers: [],
++      handlers: []
++    };
++    this._grab = g;
++    windowsToResize.forEach((e) => {
++      const onChange = () => this._onLinkedChanged(g, e);
++      g.handlers.push([e.win, e.win.connect("size-changed", onChange)]);
++      g.handlers.push([e.win, e.win.connect("position-changed", onChange)]);
++      g.handlers.push([e.win, e.win.connect("unmanaged", () => (e.gone = true))]);
      });
-+    // follow the line on: windows beside the collinear ones, and their opposite neighbours
-+    collinearWindows.forEach((otherWin) => {
-+      this._findAdjacent(otherWin, side, newRemainingWindows).forEach((recursionResult) => {
-+        result.push(recursionResult);
-+        newRemainingWindows.delete(recursionResult[0]);
-+      });
-+    });
-     return result;
+-    return result;
++    g.handlers.push([window, window.connect("unmanaged", () => (g.gone = true))]);
++    this._signals.connect(window, "size-changed", () => this._onResizingWindow(g));
    }
  
    _onWindowResizingEnd(window) {
@@ -428,6 +484,17 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
 +      if (this._grab === g) this._endGrab();
 +      return GLib.SOURCE_REMOVE;
 +    }));
++  }
++
++  _onResizingWindow(g) {
++    const currentRect = g.window.get_frame_rect();
++    g.delta = {
++      x: currentRect.x - g.start.x,
++      y: currentRect.y - g.start.y,
++      width: currentRect.width - g.start.width,
++      height: currentRect.height - g.start.height
++    };
++    g.entries.forEach((e) => this._placeLinked(g, e));
    }
  
 -  _onResizingWindow(window, startingRect, resizeVerticalSide, resizeHorizontalSide, windowsToResize) {
@@ -437,14 +504,7 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
 -      y: currentRect.y - startingRect.y,
 -      width: currentRect.width - startingRect.width,
 -      height: currentRect.height - startingRect.height
-+  _onResizingWindow(g) {
-+    const currentRect = g.window.get_frame_rect();
-+    g.delta = {
-+      x: currentRect.x - g.start.x,
-+      y: currentRect.y - g.start.y,
-+      width: currentRect.width - g.start.width,
-+      height: currentRect.height - g.start.height
-     };
+-    };
 -    windowsToResize.forEach(
 -      ([otherWindow, otherWindowRect, verticalSide, horizontalSide]) => {
 -        const isSameVerticalSide = verticalSide !== -1 && verticalSide === resizeVerticalSide;
@@ -475,10 +535,6 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
 -          Math.max(0, rect[3])
 -        );
 -      }
--    );
-+    g.entries.forEach((e) => this._placeLinked(g, e));
-+  }
-+
 +  _placeLinked(g, e) {
 +    if (e.gone) return;
 +    const r = linkedRect(e.start, g.delta, e.h, e.v, g.dragH, g.dragV, e.min);
@@ -503,29 +559,21 @@ diff -ruN a/components/tilingsystem/resizeManager.js b/components/tilingsystem/r
 +  // line could give way.
 +  _settle(g) {
 +    if (g.gone) return;
-+    const movers = [{ win: g.window, start: g.start, h: g.dragH, v: g.dragV }];
-+    g.entries.forEach((e) => {
-+      if (e.gone) return;
-+      const h = e.h && e.h === g.dragH ? e.h : null;
-+      const v = e.v && e.v === g.dragV ? e.v : null;
-+      if (h || v) movers.push({ win: e.win, start: e.start, h, v });
-+    });
-+    movers.forEach((m) => {
-+      const actual = plain(m.win.get_frame_rect());
-+      let r = actual;
-+      [[m.h, g.reachH], [m.v, g.reachV]].forEach(([side, reach]) => {
-+        if (!side) return;
-+        const partners = g.entries.filter((e) => !e.gone && e.win !== m.win && (e.h === OPPOSITE_NAME[side] || e.v === OPPOSITE_NAME[side])).map((e) => [e.start, plain(e.win.get_frame_rect())]);
-+        if (partners.length > 0) r = clampEdge(m.start, r, side, partners, reach);
-+      });
-+      if (differs(r, actual)) m.win.move_resize_frame(false, r.x, r.y, r.width, r.height);
-+    });
++    const put = linkedSettle(
++      g.start,
++      g.window.get_frame_rect(),
++      g.dragH,
++      g.dragV,
++      g.entries.map((e) => ({ start: e.start, actual: e.gone ? e.start : plain(e.win.get_frame_rect()), h: e.h, v: e.v, gone: !!e.gone })),
++      g.gaps
+     );
++    put.forEach(({ i, rect: r }) => (i < 0 ? g.window : g.entries[i].win).move_resize_frame(false, r.x, r.y, r.width, r.height));
    }
  }
  
 diff -ruN a/components/tilingsystem/tilingLayout.js b/components/tilingsystem/tilingLayout.js
 --- a/components/tilingsystem/tilingLayout.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilingsystem/tilingLayout.js	2026-11-26 20:39:16.418203732 +0100
++++ b/components/tilingsystem/tilingLayout.js	2026-11-27 16:58:58.308072275 +0100
 @@ -93,7 +93,8 @@
      this.ease({
        x: this.x,
@@ -538,12 +586,12 @@ diff -ruN a/components/tilingsystem/tilingLayout.js b/components/tilingsystem/ti
      });
 diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/tilingManager.js
 --- a/components/tilingsystem/tilingManager.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/tilingsystem/tilingManager.js	2026-11-26 20:39:16.418032513 +0100
++++ b/components/tilingsystem/tilingManager.js	2026-11-27 16:58:58.308156224 +0100
 @@ -27,6 +27,7 @@
  import { KeyBindingsDirection } from "../../keybindings.js";
  import TilingShellWindowManager from "../../components/windowManager/tilingShellWindowManager.js";
  import TilingLayoutWithSuggestions from "../windowsSuggestions/tilingLayoutWithSuggestions.js";
-+import { fluidShape, growIntoFreeSpace, touchingRects, freeTiles, placeInFrames, refillFrames } from "../../utils/freeSpace.js";
++import { fluidShape, growIntoFreeSpace, touchingRects, freeTiles, placeInFrames, refillFrames, fitToWorkArea } from "../../utils/freeSpace.js";
  import {
    getDefaultSeat,
    maximizeWindow,
@@ -676,7 +724,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      const tiledWindows = [];
      const nontiledWindows = [];
      getWindows().forEach((extWin) => {
-@@ -784,6 +838,41 @@
+@@ -784,6 +838,39 @@
        destRect.width,
        destRect.height
      );
@@ -697,10 +745,8 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
 +      if (!window.get_compositor_private() || window.minimized || window.maximizedHorizontally || window.maximizedVertically || window.is_fullscreen()) return;
 +      // 2026-11-21: no monitor check. _easeWindowRect sent it to this monitor,
 +      // so a window that spilled onto another screen is pulled back too.
-+      const wa = this._workArea, r = window.get_frame_rect();
-+      const w = Math.min(r.width, wa.width), h = Math.min(r.height, wa.height);
-+      const x = Math.max(wa.x, Math.min(r.x, wa.x + wa.width - w));
-+      const y = Math.max(wa.y, Math.min(r.y, wa.y + wa.height - h));
++      const r = window.get_frame_rect();
++      const { x, y, width: w, height: h } = fitToWorkArea(r, this._workArea);
 +      if (w !== r.width || h !== r.height) window.move_resize_frame(false, x, y, w, h);
 +      else if (x !== r.x || y !== r.y) window.move_frame(false, x, y);
 +    };
@@ -718,7 +764,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
    }
  
    _onSnapAssist(_, tile, layoutId) {
-@@ -792,13 +881,18 @@
+@@ -792,13 +879,18 @@
        this._snapAssistingInfo.update(void 0);
        return;
      }
@@ -738,7 +784,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      const currentWs = global.workspaceManager.get_active_workspace();
      const tilingLayout = this._workspaceTilingLayout.get(currentWs);
      if (!tilingLayout) return;
-@@ -891,17 +985,20 @@
+@@ -891,17 +983,20 @@
      this.openSelectionTilePreview(edgeTile, false, true, window);
    }
  
@@ -761,7 +807,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      const gaps = buildTileGaps(
        scaledRect,
        tilingLayout.innerGaps,
-@@ -948,6 +1045,22 @@
+@@ -948,6 +1043,22 @@
      this._easeWindowRectFromTile(tile, window);
    }
  
@@ -784,7 +830,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
    onSpanAllTiles(window) {
      this._easeWindowRectFromTile(
        new Tile({
-@@ -961,6 +1074,138 @@
+@@ -961,6 +1072,138 @@
      );
    }
  
@@ -923,7 +969,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
    _autoTile(window, windowCreated) {
      if (window.get_monitor() !== this._monitor.index) return;
      if (window === null || window.windowType !== Meta.WindowType.NORMAL || window.get_transient_for() !== null || window.is_attached_dialog() || window.minimized || window.maximizedHorizontally || window.maximizedVertically)
-@@ -972,11 +1217,11 @@
+@@ -972,11 +1215,11 @@
        const windowActor = window.get_compositor_private();
        const id = windowActor.connect("first-frame", () => {
          if (!window.minimized && !window.maximizedHorizontally && !window.maximizedVertically && window.get_transient_for() === null && !window.is_attached_dialog())
@@ -937,7 +983,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      }
    }
  
-@@ -991,12 +1236,12 @@
+@@ -991,12 +1234,12 @@
      const workArea = Main.layoutManager.getWorkAreaForMonitor(
        window.get_monitor()
      );
@@ -958,7 +1004,7 @@ diff -ruN a/components/tilingsystem/tilingManager.js b/components/tilingsystem/t
      let bestTileIndex = 0;
 diff -ruN a/components/window_menu/overriddenWindowMenu.js b/components/window_menu/overriddenWindowMenu.js
 --- a/components/window_menu/overriddenWindowMenu.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/window_menu/overriddenWindowMenu.js	2026-11-26 20:39:16.418561839 +0100
++++ b/components/window_menu/overriddenWindowMenu.js	2026-11-27 16:58:58.308822279 +0100
 @@ -170,6 +170,13 @@
          );
        });
@@ -985,7 +1031,7 @@ diff -ruN a/components/window_menu/overriddenWindowMenu.js b/components/window_m
  });
 diff -ruN a/components/windowsSuggestions/tilingLayoutWithSuggestions.js b/components/windowsSuggestions/tilingLayoutWithSuggestions.js
 --- a/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-26 20:39:16.418521409 +0100
++++ b/components/windowsSuggestions/tilingLayoutWithSuggestions.js	2026-11-27 16:58:58.308749889 +0100
 @@ -1,7 +1,7 @@
  import { registerGObjectClass } from "../../utils/gjs.js";
 -import { Clutter } from "../../gi/ext.js";
@@ -1052,7 +1098,7 @@ diff -ruN a/components/windowsSuggestions/tilingLayoutWithSuggestions.js b/compo
        this._previews.indexOf(preview),
 diff -ruN a/extension.js b/extension.js
 --- a/extension.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/extension.js	2026-11-26 20:39:16.418702298 +0100
++++ b/extension.js	2026-11-27 16:58:58.309030957 +0100
 @@ -19,7 +19,7 @@
   * SPDX-License-Identifier: GPL-3.0-or-later
   */
@@ -1108,7 +1154,7 @@ diff -ruN a/extension.js b/extension.js
      this._keybindings?.destroy();
 diff -ruN a/indicator/indicator.js b/indicator/indicator.js
 --- a/indicator/indicator.js	2026-10-17 12:39:11.000000000 +0200
-+++ b/indicator/indicator.js	2026-11-26 20:39:16.419958468 +0100
++++ b/indicator/indicator.js	2026-11-27 16:58:58.311965142 +0100
 @@ -1,4 +1,4 @@
 -import { St, Clutter, Shell, Gio } from "../gi/ext.js";
 +import { St, Clutter, Shell, Gio, Meta } from "../gi/ext.js";
@@ -1278,7 +1324,7 @@ diff -ruN a/indicator/indicator.js b/indicator/indicator.js
      this._layoutEditor?.destroy();
 diff -ruN a/stylesheet.css b/stylesheet.css
 --- a/stylesheet.css	2026-10-17 12:39:08.000000000 +0200
-+++ b/stylesheet.css	2026-11-26 20:39:16.420137977 +0100
++++ b/stylesheet.css	2026-11-27 16:58:58.312258350 +0100
 @@ -205,3 +205,8 @@
    border-radius-value: 6px;
    border-width-value: 1px;
@@ -1290,8 +1336,8 @@ diff -ruN a/stylesheet.css b/stylesheet.css
 +}
 diff -ruN a/utils/freeSpace.js b/utils/freeSpace.js
 --- a/utils/freeSpace.js	1970-01-01 01:00:00.000000000 +0100
-+++ b/utils/freeSpace.js	1970-01-01 01:00:00.000000000 +0100
-@@ -0,0 +1,36 @@
++++ b/utils/freeSpace.js	2026-11-27 16:58:58.317841363 +0100
+@@ -0,0 +1,44 @@
 +// Local patch: window placement logic (free space, hard frames, fill free
 +// space, fluid drag shape, Ctrl-linked resize). The logic itself is Rust, in
 +// Nero's core/ (core/src/free_space.rs, resize.rs), run as WebAssembly through
@@ -1327,4 +1373,12 @@ diff -ruN a/utils/freeSpace.js b/utils/freeSpace.js
 +const clampEdge = (start, now, side, partners, reach) =>
 +  call("clampEdge", R(start), R(now), side, partners.map(([a, b]) => [R(a), R(b)]), reach);
 +
-+export { fluidShape, openSpaceAt, growIntoFreeSpace, fitToFreeSpace, isTileVacant, touchingRects, cutAway, resolveOverlaps, fillGaps, freeTiles, framesOf, placeInFrames, refillFrames, isAdjacent, isCollinear, linkedRect, linkedMin, clampEdge };
++// Ctrl-resize bookkeeping (core/src/resize.rs): which windows move along with the
++// dragged edge, and which to put back after the grab. gaps = Settings.get_inner_gaps().
++const linkedFind = (drag, dragV, dragH, others, gaps) => call("linkedFind", R(drag), dragV, dragH, Rs(others), gaps);
++const linkedSettle = (dragStart, dragActual, dragH, dragV, entries, gaps) =>
++  call("linkedSettle", R(dragStart), R(dragActual), dragH, dragV, entries, gaps);
++// keep-onscreen: the frame shrunk to the work area and moved fully inside it
++const fitToWorkArea = (frame, workArea) => call("fitToWorkArea", R(frame), R(workArea));
++
++export { linkedFind, linkedSettle, fitToWorkArea, fluidShape, openSpaceAt, growIntoFreeSpace, fitToFreeSpace, isTileVacant, touchingRects, cutAway, resolveOverlaps, fillGaps, freeTiles, framesOf, placeInFrames, refillFrames, isAdjacent, isCollinear, linkedRect, linkedMin, clampEdge };

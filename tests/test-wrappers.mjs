@@ -31,6 +31,11 @@ eq("linkedMin", fs.linkedMin(R(1497, 0, 500, 1440), R(1597, 0, 500, 1440), "left
 const start = R(563, 0, 934, 1440), stuck = R(1497, 0, 500, 1440);
 eq("clampEdge", fs.clampEdge(start, R(563, 0, 1034, 1440), "right", [[stuck, stuck]], 10), start);
 
+const gaps = { top: 8, bottom: 8, left: 8, right: 8 };
+eq("linkedFind", fs.linkedFind(R(400, 0, 400, 1000), null, "right", [R(0, 0, 400, 1000), R(800, 0, 400, 1000)], gaps), [{ i: 1, v: null, h: "left" }]);
+eq("linkedSettle", fs.linkedSettle(start, R(563, 0, 1034, 1440), "right", null, [{ start: stuck, actual: stuck, h: "left", v: null }], gaps), [{ i: -1, rect: start }]);
+eq("fitToWorkArea", fs.fitToWorkArea(R(500, 300, 800, 900), R(0, 32, 1024, 568)), R(224, 32, 800, 568));
+
 // line groups: tiles are changed in place, chains are plain objects
 const mk = (a) => a.map(([x, y, width, height, groups]) => ({ x, y, width, height, groups }));
 const t = mk([[0, 0, .22, .5, [1]], [0, .5, .22, .5, [3]], [.22, 0, .56, .5, [4, 1]], [.22, .5, .56, .5, [5, 3]], [.78, 0, .22, .5, [4]], [.78, .5, .22, .5, [5]]]);

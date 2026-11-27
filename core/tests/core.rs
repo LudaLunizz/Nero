@@ -4,7 +4,8 @@
 use nero_core::free_space::*;
 use nero_core::line_groups::*;
 use nero_core::resize::{
-    MinSize, Side, clamp_edge, is_adjacent, is_collinear, linked_min, linked_rect,
+    Gaps, Linked, MinSize, Put, SettleWin, Side, clamp_edge, find_linked, is_adjacent,
+    is_collinear, linked_min, linked_rect, linked_settle, reach,
 };
 use nero_core::{Point, Rect, abi, fit::fit_to_work_area};
 
@@ -636,4 +637,169 @@ fn line_groups_attach_and_separate() {
     // tile count and geometry untouched
     assert_eq!(t.len(), 6);
     assert_eq!(t[2].x, 0.22);
+}
+
+const GAPS: Gaps = Gaps {
+    top: 8.0,
+    bottom: 8.0,
+    left: 8.0,
+    right: 8.0,
+};
+
+#[test]
+fn reach_of_the_gaps() {
+    assert_eq!(reach(&GAPS, Side::Left), 8.0 + 8.0 * 4.0);
+    // a gap of 0 counts as 2 (also the right gap in the error margin)
+    assert_eq!(reach(&Gaps::default(), Side::Top), 2.0 + 2.0 * 4.0);
+    let g = Gaps {
+        top: 0.0,
+        bottom: 4.0,
+        left: 6.0,
+        right: 10.0,
+    };
+    assert_eq!(reach(&g, Side::Top), 2.0 + 40.0);
+    assert_eq!(reach(&g, Side::Bottom), 4.0 + 40.0);
+}
+
+#[test]
+fn linked_windows_follow_the_line() {
+    // three columns; the middle one's right edge is dragged: the right one
+    // follows with its left edge, the left one is not touched
+    let cols = [
+        r(0.0, 0.0, 400.0, 1000.0),
+        r(400.0, 0.0, 400.0, 1000.0),
+        r(800.0, 0.0, 400.0, 1000.0),
+    ];
+    let drag = cols[1];
+    let found = find_linked(&drag, None, Some(Side::Right), &[cols[0], cols[2]], &GAPS);
+    assert_eq!(
+        found,
+        vec![Linked {
+            i: 1,
+            v: None,
+            h: Some(Side::Left)
+        }]
+    );
+    // two windows stacked on the right: both follow; the one below is found
+    // through the line, not by touching the dragged window
+    let stack = [r(800.0, 0.0, 400.0, 500.0), r(800.0, 500.0, 400.0, 500.0)];
+    let found = find_linked(&drag, None, Some(Side::Right), &stack, &GAPS);
+    assert_eq!(
+        found.iter().map(|l| (l.i, l.h)).collect::<Vec<_>>(),
+        vec![(0, Some(Side::Left)), (1, Some(Side::Left))]
+    );
+    // a corner drag links both directions; the window below sits on the line
+    // of the right edge (collinear) and the one on the right on the bottom line,
+    // so each is linked both ways
+    let below = r(400.0, 1000.0, 400.0, 500.0);
+    let right = r(800.0, 0.0, 400.0, 1000.0);
+    let found = find_linked(
+        &drag,
+        Some(Side::Bottom),
+        Some(Side::Right),
+        &[below, right],
+        &GAPS,
+    );
+    assert_eq!(
+        found,
+        vec![
+            Linked {
+                i: 0,
+                v: Some(Side::Top),
+                h: Some(Side::Right)
+            },
+            Linked {
+                i: 1,
+                v: Some(Side::Bottom),
+                h: Some(Side::Left)
+            },
+        ]
+    );
+    // nothing near: nothing linked
+    assert!(
+        find_linked(
+            &drag,
+            None,
+            Some(Side::Right),
+            &[r(2000.0, 0.0, 100.0, 100.0)],
+            &GAPS
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn settle_puts_the_edge_back() {
+    // the dragged window grew 100 px to the right, its neighbour (at 500 px)
+    // could not shrink: it is pulled back to where the neighbour could reach
+    let start = r(563.0, 0.0, 934.0, 1440.0);
+    let p_start = r(1497.0, 0.0, 500.0, 1440.0);
+    let neighbour = SettleWin {
+        start: p_start,
+        actual: p_start,
+        h: Some(Side::Left),
+        v: None,
+        gone: false,
+    };
+    let put = linked_settle(
+        &start,
+        &r(563.0, 0.0, 1034.0, 1440.0),
+        None,
+        None,
+        &[neighbour],
+        &GAPS,
+    );
+    assert!(put.is_empty(), "no drag side, nothing to clamp");
+    let put = linked_settle(
+        &start,
+        &r(563.0, 0.0, 1034.0, 1440.0),
+        Some(Side::Right),
+        None,
+        &[neighbour],
+        &GAPS,
+    );
+    assert_eq!(put, vec![Put { i: -1, rect: start }]);
+    // the neighbour followed: nothing to do
+    let followed = SettleWin {
+        actual: r(1597.0, 0.0, 400.0, 1440.0),
+        ..neighbour
+    };
+    assert!(
+        linked_settle(
+            &start,
+            &r(563.0, 0.0, 1034.0, 1440.0),
+            Some(Side::Right),
+            None,
+            &[followed],
+            &GAPS
+        )
+        .is_empty()
+    );
+    // a window that is gone is left out
+    let gone = SettleWin {
+        gone: true,
+        ..neighbour
+    };
+    assert!(
+        linked_settle(
+            &start,
+            &r(563.0, 0.0, 1034.0, 1440.0),
+            Some(Side::Right),
+            None,
+            &[gone],
+            &GAPS
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn linked_find_and_settle_through_the_json_boundary() {
+    let out = abi::call(br#"{"f":"linkedFind","a":[{"x":400,"y":0,"width":400,"height":1000},null,"right",[{"x":800,"y":0,"width":400,"height":1000}],{"top":8,"bottom":8,"left":8,"right":8}]}"#);
+    assert_eq!(out, r#"{"ok":[{"i":0,"v":null,"h":"left"}]}"#);
+    let out = abi::call(br#"{"f":"fitToWorkArea","a":[{"x":500,"y":300,"width":800,"height":900},{"x":0,"y":32,"width":1024,"height":568}]}"#);
+    assert_eq!(
+        out,
+        r#"{"ok":{"x":224.0,"y":32.0,"width":800.0,"height":568.0}}"#
+    );
 }
