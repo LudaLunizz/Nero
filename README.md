@@ -13,6 +13,7 @@
 </p>
 
 <p align="center">
+  <a href="#whats-new-in-022"><b>What's new</b></a> ·
   <a href="#whats-in-the-box"><b>What's in the box</b></a> ·
   <a href="#the-rust-thing"><b>The Rust thing</b></a> ·
   <a href="#get-started"><b>Get started</b></a> ·
@@ -30,6 +31,26 @@ most — or use them all and wonder why GNOME didn't ship this way.
 
 Wayland. GNOME 46–50. Multi-monitor. Rust core compiled to WebAssembly, running
 inside the shell with zero daemons and zero latency. MIT licensed.
+
+---
+
+## What's new in 0.2.2
+
+A full code review, every finding fixed. Nothing you rely on changed. Only the
+bugs are gone:
+
+- **`nero taskbar undo` really undoes.** Dash to Panel settings, Ubuntu Dock, your
+  old Argos script, the split extension: all of it goes back, even if you ran
+  setup twice.
+- **The drag preview never covers a window**, not even with the pointer exactly on
+  a window's edge.
+- **A plain drag stays plain.** No tiling key, no snap: the windows next to it are
+  left alone.
+- **A broken core can't lock you out.** Password prompts always open; every
+  extension falls back to plain GNOME and switches off cleanly.
+- **One Esc, one step** in the layout editor: the dialog first, then the editor.
+
+[Release notes](https://github.com/LudaLunizz/Nero/releases/tag/v0.2.2)
 
 ---
 
@@ -70,7 +91,8 @@ makes tiling behave like you thought it already did:
   something. Left, right, up, down. Done.
 - **Ctrl-linked resize** — grab an edge while holding Ctrl and every window
   touching that edge moves with it. The whole row breathes together.
-- **Layout editor per screen** — Tab switches monitors. Finally.
+- **Layout editor per screen** — Tab switches monitors. Finally. Esc backs out
+  one step at a time.
 
 ### 3. nero-layout
 
@@ -111,7 +133,8 @@ with window previews, and a built-in system monitor showing CPU, GPU, RAM, netwo
 and your Claude Code usage — all updating every second from a Rust binary.
 
 The Argos buttons can live on a different monitor than your main panel if you want
-your status info out of the way.
+your status info out of the way. Changed your mind? `nero taskbar undo` puts back
+everything setup touched.
 
 ---
 
@@ -127,7 +150,9 @@ touch windows, so the extensions are thin JS wrappers that ask the core where th
 go and carry out what comes back.
 
 No daemon. No D-Bus. Synchronous, in-process, and a Rust panic becomes a JS
-exception instead of crashing your desktop.
+exception instead of crashing your desktop. If the core is missing or broken, the
+extensions fall back to what GNOME and Tiling Shell do on their own: a password
+prompt still opens, a drag still drops.
 
 The goal: every decision in Rust, JS only as the GNOME glue.
 
@@ -135,7 +160,19 @@ The goal: every decision in Rust, JS only as the GNOME glue.
 
 ## Get started
 
-You need Rust (edition 2024) with the WebAssembly target:
+**Quickest:** grab a zip from the [latest release](https://github.com/LudaLunizz/Nero/releases/latest)
+(check it against `SHA256SUMS.txt`) and install it as a whole:
+
+```sh
+gnome-extensions install --force nero-layout@LudaLunizz.v0.2.2.shell-extension.zip
+# log out, log back in, then:
+gnome-extensions enable nero-layout@LudaLunizz
+```
+
+The Tiling Shell patch and the `nero` command are not zipped: build those from
+source as below.
+
+**From source:** you need Rust (edition 2024) with the WebAssembly target:
 
 ```sh
 rustup target add wasm32-unknown-unknown
