@@ -24,6 +24,8 @@ The goal is Nero in Rust as far as GNOME allows: every decision and every piece 
 state in the core, with the JS only passing events in and carrying out what comes back.
 `nero-workspaces`, `nero-layout` and `nero-keep-onscreen` are there already: their
 decisions are `core/src/ws_model.rs`, `core/src/layout_model.rs` and `core/src/keep_model.rs`.
+The taskbar setup and the system monitor are the `nero` command (`cli/`), with their logic in
+`core/src/taskbar.rs` and `core/src/sysmon.rs`.
 
 ## 0. Build the Rust core
 
@@ -241,22 +243,30 @@ previews on click. It is built from two extensions from extensions.gnome.org, wh
 first: [Dash to Panel](https://extensions.gnome.org/extension/1160/dash-to-panel/) and
 [Argos](https://extensions.gnome.org/extension/1176/argos/). Then:
 
+The setup is the `nero` command (Rust, `cli/`; the logic is in `core/src/taskbar.rs` and
+`core/src/sysmon.rs`). Build and install it once (needs Rust, see section 0):
+
 ```sh
-./taskbar/setup-taskbar.sh                  # taskbar at the bottom + the sysmon script
-./taskbar/setup-taskbar.sh --monitor DP-1   # same, and the Argos buttons on DP-1's taskbar
-./taskbar/setup-taskbar.sh --undo           # put back the Dash to Panel settings from before the last run
+cargo install --path cli --locked          # puts `nero` in ~/.cargo/bin; or copy cli/target/release/nero anywhere
+nero taskbar setup                         # taskbar at the bottom + the system monitor
+nero taskbar setup --monitor DP-1          # same, and the Argos buttons on DP-1's taskbar
+nero taskbar undo                          # put back the Dash to Panel settings from before the last setup
 ```
 
-The script saves your current Dash to Panel settings to `~/.local/state/nero/` before it changes
-anything, and turns off Ubuntu's own dock (it would sit next to the taskbar).
+The setup saves your current Dash to Panel settings to `~/.local/state/nero/` before it changes
+anything, and turns off Ubuntu's own dock (it would sit next to the taskbar). The program has the
+`nero-argos-split` extension inside it and installs it when you give `--monitor`.
 
-**sysmon** (`taskbar/argos/sysmon.1s.sh`, copied to `~/.config/argos/`, refreshes every second)
-shows, left to right: your Claude 5-hour and weekly usage as bars (green under 50 %, blue from
-50 %, red from 80 %; only when Claude Code is logged in on this account, fetched every 5 minutes
-in the background, needs `python3`), download and upload in MB/s, RAM use as a small bar, CPU
-temperature and load, GPU temperature and load (NVIDIA through `nvidia-smi`, AMD through sysfs).
+**sysmon** (`nero sysmon`; the setup writes the Argos script `~/.config/argos/sysmon.1s.sh`, which
+only runs `nero sysmon`, refreshes every second) shows, left to right: your Claude 5-hour and
+weekly usage as bars (green under 50 %, blue from 50 %, red from 80 %; only when Claude Code is
+logged in on this account, fetched every 5 minutes in the background through `curl`),
+download and upload in MB/s, RAM use as a small bar, CPU temperature and load, GPU temperature
+and load (NVIDIA through `nvidia-smi`, AMD through sysfs).
 Click it for the details, a "Refresh usage" entry and a link to GNOME System Monitor.
-Its state lives in `$XDG_RUNTIME_DIR/argos-sysmon` (mode 700).
+Its state lives in `$XDG_RUNTIME_DIR/argos-sysmon` (mode 700). Keep `nero` where it is after the
+setup: the Argos script points at it. An older script of yours is saved to `~/.local/state/nero/`
+first.
 
 **nero-argos-split@LudaLunizz** moves the Argos buttons out of the main panel (the taskbar on the
 primary monitor) into the taskbar of one other monitor. Pick the monitor by its connector name
@@ -276,7 +286,7 @@ forth every 2 seconds.
 ## License
 
 Nero is MIT licensed (see `LICENSE`): the Rust core (`core/`), `nero-keep-onscreen`,
-`nero-layout`, `nero-workspaces`, `taskbar/` and the tests.
+`nero-layout`, `nero-workspaces`, `cli/`, `taskbar/` and the tests.
 
 The one exception is `tilingshell-patch/`. That patch is a derivative of
 [Tiling Shell](https://github.com/domferr/tilingshell) © Domenico Ferraro and stays

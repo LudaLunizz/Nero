@@ -1,5 +1,6 @@
 build/
 core/target/
+cli/target/
 keep-onscreen/nero-keep-onscreen@LudaLunizz/nero.js
 keep-onscreen/nero-keep-onscreen@LudaLunizz/helpers.js
 keep-onscreen/nero-keep-onscreen@LudaLunizz/nero_core.wasm

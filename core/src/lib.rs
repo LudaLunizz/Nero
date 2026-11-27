@@ -15,6 +15,8 @@ pub mod layout;
 pub mod layout_model;
 pub mod line_groups;
 pub mod resize;
+pub mod sysmon;
+pub mod taskbar;
 pub mod touchpad;
 pub mod workspaces;
 pub mod ws_model;
