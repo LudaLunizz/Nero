@@ -2,9 +2,23 @@
   <img src="docs/banner.png" width="860" alt="Nero, a window manager for GNOME: Wayland, GNOME 46 to 50, Rust core">
 </p>
 
-# Nero
+<h3 align="center">Your GNOME desktop is broken. You just got used to it.</h3>
 
-**Your GNOME desktop is broken. You just got used to it.**
+<p align="center">
+  <a href="https://github.com/LudaLunizz/Nero/releases/latest"><img src="https://img.shields.io/github/v/release/LudaLunizz/Nero?color=ff8a3d&label=release" alt="Latest release"></a>
+  <a href="https://github.com/LudaLunizz/Nero/actions/workflows/test.yml"><img src="https://github.com/LudaLunizz/Nero/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <img src="https://img.shields.io/badge/GNOME-46%E2%80%9350-6ea8fe" alt="GNOME 46 to 50">
+  <img src="https://img.shields.io/badge/core-Rust%20%E2%86%92%20wasm-ff8a3d" alt="Rust core, built to WebAssembly">
+  <a href="#license"><img src="https://img.shields.io/badge/license-MIT-5fd08a" alt="MIT license"></a>
+</p>
+
+<p align="center">
+  <a href="#whats-in-the-box"><b>What's in the box</b></a> ·
+  <a href="#the-rust-thing"><b>The Rust thing</b></a> ·
+  <a href="#get-started"><b>Get started</b></a> ·
+  <a href="#settings"><b>Settings</b></a> ·
+  <a href="#license"><b>License</b></a>
+</p>
 
 Windows open half off-screen. You tile something and the rest of your layout
 explodes. You reboot and spend two minutes dragging everything back where it was.
@@ -129,7 +143,8 @@ rustup target add wasm32-unknown-unknown
 
 Then pick your parts:
 
-### keep-onscreen
+<details>
+<summary><b>keep-onscreen</b></summary>
 
 ```sh
 ./core/build.sh
@@ -139,7 +154,10 @@ glib-compile-schemas ~/.local/share/gnome-shell/extensions/nero-keep-onscreen@Lu
 gnome-extensions enable nero-keep-onscreen@LudaLunizz
 ```
 
-### Tiling Shell patch
+</details>
+
+<details>
+<summary><b>Tiling Shell patch</b></summary>
 
 ```sh
 ./tilingshell-patch/apply.sh              # downloads Tiling Shell 18.0, patches it
@@ -151,7 +169,10 @@ gnome-extensions enable nero-keep-onscreen@LudaLunizz
 An update from extensions.gnome.org overwrites the patch — run `apply.sh --install`
 again.
 
-### nero-layout
+</details>
+
+<details>
+<summary><b>nero-layout</b></summary>
 
 ```sh
 ./core/build.sh
@@ -164,7 +185,10 @@ gnome-extensions enable nero-layout@LudaLunizz
 Layout saves to `~/.local/state/nero/layout.json` every minute. Set `restore-now`
 to `true` to restore without logging out.
 
-### nero-workspaces
+</details>
+
+<details>
+<summary><b>nero-workspaces</b></summary>
 
 ```sh
 ./core/build.sh
@@ -174,7 +198,10 @@ glib-compile-schemas ~/.local/share/gnome-shell/extensions/nero-workspaces@LudaL
 gnome-extensions enable nero-workspaces@LudaLunizz
 ```
 
-### taskbar
+</details>
+
+<details>
+<summary><b>taskbar</b></summary>
 
 Install [Dash to Panel](https://extensions.gnome.org/extension/1160/dash-to-panel/)
 and [Argos](https://extensions.gnome.org/extension/1176/argos/) from
@@ -186,6 +213,8 @@ nero taskbar setup                        # taskbar at the bottom + system monit
 nero taskbar setup --monitor DP-1         # same, Argos buttons on DP-1
 nero taskbar undo                         # restore your previous Dash to Panel settings
 ```
+
+</details>
 
 ---
 
