@@ -15,6 +15,7 @@ pub mod line_groups;
 pub mod resize;
 pub mod touchpad;
 pub mod workspaces;
+pub mod ws_model;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
