@@ -208,8 +208,8 @@ diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tileP
 -        opacity: 255,
 -        duration: ease ? GlobalState.get().tilePreviewAnimationTime : 0,
 -        mode: Clutter.AnimationMode.EASE_OUT_QUAD
-+        // local patch: the green target is drawn at 70% (Ctrl-drag overlay 30% lighter)
-+        opacity: this.has_style_class_name("selection-tile-preview") ? 178 : 255,
++        // local patch: the green target is drawn at 90%, 30 points above the 60% layout tiles
++        opacity: this.has_style_class_name("selection-tile-preview") ? 230 : 255,
 +        duration: ease ? fluid ? Math.max(GlobalState.get().tilePreviewAnimationTime, 220) : GlobalState.get().tilePreviewAnimationTime : 0,
 +        mode: fluid ? Clutter.AnimationMode.EASE_OUT_CUBIC : Clutter.AnimationMode.EASE_OUT_QUAD
        });
@@ -218,7 +218,7 @@ diff -ruN a/components/tilepreview/tilePreview.js b/components/tilepreview/tileP
        this.set_size(this.innerWidth, this.innerHeight);
        this.ease({
 -        opacity: 255,
-+        opacity: this.has_style_class_name("selection-tile-preview") ? 178 : 255,
++        opacity: this.has_style_class_name("selection-tile-preview") ? 230 : 255,
          duration: ease ? GlobalState.get().tilePreviewAnimationTime : 0,
          mode: Clutter.AnimationMode.EASE_OUT_QUAD
        });
@@ -531,8 +531,8 @@ diff -ruN a/components/tilingsystem/tilingLayout.js b/components/tilingsystem/ti
        x: this.x,
        y: this.y,
 -      opacity: 255,
-+      // local patch: layout tiles 30% lighter while dragging with Ctrl
-+      opacity: 178,
++      // local patch: layout tiles at 60% while dragging with Ctrl
++      opacity: 153,
        duration: ease ? GlobalState.get().tilePreviewAnimationTime : 0,
        mode: Clutter.AnimationMode.EASE_OUT_QUAD
      });
