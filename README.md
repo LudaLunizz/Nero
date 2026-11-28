@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="#whats-new-in-022"><b>What's new</b></a> ·
+  <a href="#whats-new-in-025"><b>What's new</b></a> ·
   <a href="#whats-in-the-box"><b>What's in the box</b></a> ·
   <a href="#the-rust-thing"><b>The Rust thing</b></a> ·
   <a href="#get-started"><b>Get started</b></a> ·
@@ -34,7 +34,21 @@ inside the shell with zero daemons and zero latency. MIT licensed.
 
 ---
 
-## What's new in 0.2.2
+## What's new in 0.2.5
+
+**The drag preview follows your windows.** Hold the tiling key while you drag,
+and the target now takes its columns from the windows already on screen:
+
+- **A full-width window above or below?** The target is full width too, not one
+  of your layout's columns.
+- **Two half windows on top?** The space below splits right where they do.
+- **Nothing placed yet?** Your layout's tiles decide, like before.
+- **Portrait screens never get columns.** The target is always full width; only
+  the layout's rows divide it.
+
+[Release notes](https://github.com/LudaLunizz/Nero/releases/tag/v0.2.5)
+
+### In 0.2.2
 
 A full code review, every finding fixed. Nothing you rely on changed. Only the
 bugs are gone:
@@ -86,7 +100,9 @@ makes tiling behave like you thought it already did:
 - **No kidnapping.** Tiling Shell likes to grab your other windows and slide them
   into empty frames. That's off.
 - **Fluid drag preview** — a rounded shape that morphs to the largest open space
-  around your pointer. Other windows are obstacles, not victims.
+  around your pointer. Other windows are obstacles, not victims, and they set
+  the columns: under a full-width window you get full width. Portrait screens
+  only ever split into rows.
 - **Fill free space** — Super + right-click and the window grows until it hits
   something. Left, right, up, down. Done.
 - **Ctrl-linked resize** — grab an edge while holding Ctrl and every window
@@ -164,7 +180,7 @@ The goal: every decision in Rust, JS only as the GNOME glue.
 (check it against `SHA256SUMS.txt`) and install it as a whole:
 
 ```sh
-gnome-extensions install --force nero-layout@LudaLunizz.v0.2.2.shell-extension.zip
+gnome-extensions install --force nero-layout@LudaLunizz.v0.2.5.shell-extension.zip
 # log out, log back in, then:
 gnome-extensions enable nero-layout@LudaLunizz
 ```
