@@ -125,11 +125,16 @@ pub fn scroll(
 ) -> ScrollResult {
     let mut s = state.clone();
     let threshold = if threshold > 0.0 { threshold } else { 1.0 };
-    if ev.now_ms - s.last_event_ms > IDLE_RESET_MS {
+    // The event clock is 32-bit milliseconds and wraps after ~49.7 days: a
+    // time before the last one counts as a long pause, never as "cooling down"
+    // (that would block every step from then on).
+    let idle = ev.now_ms - s.last_event_ms;
+    if !(0.0..=IDLE_RESET_MS).contains(&idle) {
         s.acc = 0.0;
     }
     s.last_event_ms = ev.now_ms;
-    let cooling = ev.now_ms - s.last_step_ms < cooldown_ms;
+    let since_step = ev.now_ms - s.last_step_ms;
+    let cooling = (0.0..cooldown_ms).contains(&since_step);
     let mut step = 0;
     if cooling {
         s.acc = 0.0;
@@ -308,6 +313,22 @@ mod tests {
             ev(-0.6, false, 20.0),
         ];
         assert_eq!(run(&evs, 250.0), vec![-1]);
+    }
+
+    #[test]
+    fn clock_wrap_does_not_block_steps() {
+        // event.get_time() wraps at 2^32 ms: steps go on after the wrap
+        let top = 4_294_967_000.0;
+        let evs = [
+            ev(1.0, true, top),
+            ev(1.0, true, 100.0),
+            ev(1.0, true, 400.0),
+            ev(1.0, true, 700.0),
+        ];
+        assert_eq!(run(&evs, 250.0), vec![1, 1, 1, 1]);
+        // smooth scroll collected before the wrap does not carry over
+        let evs = [ev(0.6, false, top), ev(0.6, false, 100.0)];
+        assert!(run(&evs, 250.0).is_empty());
     }
 
     #[test]
