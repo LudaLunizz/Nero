@@ -245,6 +245,12 @@ fn undo() -> Res {
             .flatten()
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
+        if tb::already_undone(&names) {
+            return Err(format!(
+                "nothing to undo: the last setup was undone already (see {})",
+                state.display()
+            ));
+        }
         let last = tb::latest_backup(&names).ok_or(format!(
             "nothing to undo: no saved settings in {}",
             state.display()
@@ -274,19 +280,36 @@ fn undo() -> Res {
                 let bak = state.join(&name);
                 let old =
                     fs::read(&bak).map_err(|e| format!("cannot read {}: {e}", bak.display()))?;
-                write_atomic(&sysmon_path(), &old, 0o755)?;
+                let target = sysmon_path();
+                // a script written since setup is saved first, never lost
+                if let Ok(now) = fs::read(&target)
+                    && !tb::is_wrapper(&String::from_utf8_lossy(&now))
+                {
+                    let keep = write_new(
+                        &state,
+                        &format!("sysmon.1s.sh.{}-before-undo.bak", stamp()),
+                        &now,
+                    )?;
+                    println!("your sysmon.1s.sh of now is saved as {}", keep.display());
+                }
+                write_atomic(&target, &old, 0o755)?;
                 println!("your old sysmon.1s.sh is back");
             }
             tb::UndoStep::RemoveSysmon => {
                 let target = sysmon_path();
-                let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned());
-                // only our wrapper goes, never a script written since
-                if exe.is_ok_and(|exe| {
-                    fs::read_to_string(&target).is_ok_and(|t| t == tb::argos_wrapper(&exe))
-                }) {
-                    fs::remove_file(&target)
-                        .map_err(|e| format!("cannot remove {}: {e}", target.display()))?;
-                    println!("removed sysmon.1s.sh");
+                // only a nero wrapper goes (from any nero binary), never a
+                // script written since
+                match fs::read_to_string(&target) {
+                    Ok(t) if tb::is_wrapper(&t) => {
+                        fs::remove_file(&target)
+                            .map_err(|e| format!("cannot remove {}: {e}", target.display()))?;
+                        println!("removed sysmon.1s.sh");
+                    }
+                    Ok(_) => println!(
+                        "left {} alone: it was changed after setup",
+                        target.display()
+                    ),
+                    Err(_) => {}
                 }
             }
             tb::UndoStep::Enable(uuid) => {
@@ -391,7 +414,8 @@ fn install_sysmon(state: &Path, stamp: &str) -> Res<tb::SysmonBefore> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find this program: {e}"))?;
     let wrapper = tb::argos_wrapper(&exe.to_string_lossy());
     let before = match fs::read(&target) {
-        Ok(old) if old == wrapper.as_bytes() => tb::SysmonBefore::Wrapper,
+        // a wrapper of any nero binary: nothing of the user's to keep
+        Ok(old) if tb::is_wrapper(&String::from_utf8_lossy(&old)) => tb::SysmonBefore::Wrapper,
         Ok(old) => {
             let bak = write_new(state, &format!("sysmon.1s.sh.{stamp}.bak"), &old)
                 .map_err(|e| format!("cannot save the old script: {e}"))?;

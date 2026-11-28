@@ -300,6 +300,13 @@ fn taskbar_setup_and_undo() {
     assert!(stdout(&o).contains("keeping the settings saved by that first run"));
     assert!(!calls(&home).iter().any(|l| l.starts_with("dconf dump")));
 
+    // a script the user writes after setup is saved by the undo, not lost
+    fs::write(
+        home.join(".config/argos/sysmon.1s.sh"),
+        "#!/bin/bash\necho mine\n",
+    )
+    .unwrap();
+
     // undo puts back what was there before the first setup
     fs::write(home.join("calls.log"), "").unwrap();
     let o = nero(&home, Some(&bin), &["taskbar", "undo"]);
@@ -328,9 +335,26 @@ fn taskbar_setup_and_undo() {
     // Dash to Panel was not enabled before (the fake says no Enabled line)
     assert!(c.contains(&"gnome-extensions disable dash-to-panel@jderose9.github.com".to_string()));
     assert!(!home.join("state/nero/taskbar-setup.json").exists());
-    // a second undo has only the old backups to go on: Dash to Panel only
+    let kept: Vec<_> = fs::read_dir(home.join("state/nero"))
+        .unwrap()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .ends_with("-before-undo.bak")
+        })
+        .collect();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(
+        fs::read_to_string(kept[0].path()).unwrap(),
+        "#!/bin/bash\necho mine\n"
+    );
+    // a second undo does not load the old backup again
+    fs::write(home.join("calls.log"), "").unwrap();
     let o = nero(&home, Some(&bin), &["taskbar", "undo"]);
-    assert!(o.status.success());
+    assert_eq!(o.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("undone already"));
+    assert!(!calls(&home).iter().any(|l| l.starts_with("dconf load")));
     let _ = fs::remove_dir_all(&home);
 }
 
