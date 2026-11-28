@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="#whats-new-in-025"><b>What's new</b></a> ·
+  <a href="#whats-new-in-026"><b>What's new</b></a> ·
   <a href="#whats-in-the-box"><b>What's in the box</b></a> ·
   <a href="#the-rust-thing"><b>The Rust thing</b></a> ·
   <a href="#get-started"><b>Get started</b></a> ·
@@ -34,7 +34,10 @@ inside the shell with zero daemons and zero latency. MIT licensed.
 
 ---
 
-## What's new in 0.2.5
+## What's new in 0.2.6
+
+0.2.6 only brings these docs up to date; the code is the same as 0.2.5, which
+added this:
 
 **The drag preview follows your windows.** Hold the tiling key while you drag,
 and the target now takes its columns from the windows already on screen:
@@ -46,7 +49,8 @@ and the target now takes its columns from the windows already on screen:
 - **Portrait screens never get columns.** The target is always full width; only
   the layout's rows divide it.
 
-[Release notes](https://github.com/LudaLunizz/Nero/releases/tag/v0.2.5)
+[Release notes 0.2.6](https://github.com/LudaLunizz/Nero/releases/tag/v0.2.6) ·
+[0.2.5](https://github.com/LudaLunizz/Nero/releases/tag/v0.2.5)
 
 ### In 0.2.2
 
@@ -180,7 +184,7 @@ The goal: every decision in Rust, JS only as the GNOME glue.
 (check it against `SHA256SUMS.txt`) and install it as a whole:
 
 ```sh
-gnome-extensions install --force nero-layout@LudaLunizz.v0.2.5.shell-extension.zip
+gnome-extensions install --force nero-layout@LudaLunizz.v0.2.6.shell-extension.zip
 # log out, log back in, then:
 gnome-extensions enable nero-layout@LudaLunizz
 ```
