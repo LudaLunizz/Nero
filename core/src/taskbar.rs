@@ -85,12 +85,46 @@ pub fn backup_name(stamp: &str) -> String {
     format!("dash-to-panel-{stamp}.dconf")
 }
 
-/// The newest backup among these file names (the stamps sort by time).
+/// The newest setup backup among these file names: `dash-to-panel-STAMP.dconf`
+/// or `dash-to-panel-STAMP-N.dconf` (a second one in the same second). Other
+/// files (the `-before-undo` save of a failed undo) are never picked. As plain
+/// strings `...-2.dconf` would sort before `....dconf`, so it is (stamp, N).
 pub fn latest_backup(names: &[String]) -> Option<&String> {
+    let key = |n: &String| -> Option<(String, u32)> {
+        let stem = n.strip_prefix("dash-to-panel-")?.strip_suffix(".dconf")?;
+        let stamp = stem.get(..15)?;
+        let ok = stamp.bytes().enumerate().all(|(i, c)| {
+            if i == 8 {
+                c == b'-'
+            } else {
+                c.is_ascii_digit()
+            }
+        });
+        let n = match &stem[15..] {
+            "" => 1,
+            rest => {
+                let d = rest.strip_prefix('-')?;
+                if d.is_empty() || !d.bytes().all(|c| c.is_ascii_digit()) {
+                    return None;
+                }
+                d.parse().ok()?
+            }
+        };
+        ok.then(|| (stamp.to_string(), n))
+    };
     names
         .iter()
-        .filter(|n| n.starts_with("dash-to-panel-") && n.ends_with(".dconf"))
-        .max()
+        .filter_map(|n| key(n).map(|k| (k, n)))
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, n)| n)
+}
+
+/// True when the folder holds a setup record that was undone already: then the
+/// old no-record path must not load a Dash to Panel backup a second time.
+pub fn already_undone(names: &[String]) -> bool {
+    names
+        .iter()
+        .any(|n| n.starts_with("taskbar-setup.") && n.ends_with(".undone.json"))
 }
 
 /// A `YYYYMMDD-HHMMSS` stamp (UTC) from seconds since 1970, for when date(1) can't
@@ -252,6 +286,23 @@ pub fn argos_wrapper(exe: &str) -> String {
     )
 }
 
+/// True for a script `argos_wrapper` wrote, whatever program path it names (a
+/// setup by one `nero` binary, an undo by another, e.g. after `cargo install`).
+pub fn is_wrapper(text: &str) -> bool {
+    let mut lines = text.split_inclusive('\n');
+    let (Some(a), Some(b), Some(c), None) =
+        (lines.next(), lines.next(), lines.next(), lines.next())
+    else {
+        return false;
+    };
+    let template = argos_wrapper("X");
+    let mut t = template.split_inclusive('\n');
+    a == t.next().unwrap_or_default()
+        && b == t.next().unwrap_or_default()
+        && c.starts_with("exec ")
+        && c.ends_with(" sysmon \"$@\"\n")
+}
+
 /// A word for a POSIX shell, in single quotes when it needs them.
 pub fn shell_quote(s: &str) -> String {
     if !s.is_empty()
@@ -332,6 +383,22 @@ mod tests {
             "dash-to-panel-20261127-013000.dconf"
         );
         assert_eq!(latest_backup(&a(&["layout.json"])), None);
+        // a second backup in the same second is the newer one
+        let same = a(&[
+            "dash-to-panel-20261127-013000.dconf",
+            "dash-to-panel-20261127-013000-2.dconf",
+        ]);
+        assert_eq!(latest_backup(&same).unwrap(), &same[1]);
+        // the save a failed undo makes is never loaded as a setup backup
+        let undo = a(&[
+            "dash-to-panel-20261127-013000.dconf",
+            "dash-to-panel-20261128-090000-before-undo.dconf",
+        ]);
+        assert_eq!(latest_backup(&undo).unwrap(), &undo[0]);
+        assert!(already_undone(&a(&[
+            "taskbar-setup.20261128-090000.undone.json"
+        ])));
+        assert!(!already_undone(&a(&["taskbar-setup.json"])));
         assert_eq!(
             backup_name("20261127-013000"),
             "dash-to-panel-20261127-013000.dconf"
@@ -456,5 +523,12 @@ mod tests {
                 .contains("exec '/home/my user/it'\\''s/nero' sysmon")
         );
         assert_eq!(shell_quote(""), "''");
+        // any nero wrapper is ours, a changed one is not
+        assert!(is_wrapper(&argos_wrapper("/home/u/.cargo/bin/nero")));
+        assert!(is_wrapper(&argos_wrapper("/home/my user/it's/nero")));
+        let mut edited = argos_wrapper("/x/nero");
+        edited.push_str("echo mine\n");
+        assert!(!is_wrapper(&edited));
+        assert!(!is_wrapper("#!/bin/bash\necho cpu\n"));
     }
 }

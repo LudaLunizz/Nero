@@ -191,8 +191,10 @@ pub fn parse_usage(text: &str) -> Usage {
     let reset = |v: Option<&str>| {
         v.filter(|v| {
             !v.is_empty()
-                && v.bytes()
-                    .all(|c| c.is_ascii_digit() || matches!(c, b'T' | b':' | b'.' | b'+' | b'-'))
+                && v.bytes().all(|c| {
+                    c.is_ascii_digit()
+                        || matches!(c, b'T' | b':' | b'.' | b'+' | b'-' | b'Z' | b'z')
+                })
         })
         .unwrap_or("-")
         .to_string()
@@ -335,11 +337,13 @@ pub fn parse_cpu_stat(text: &str) -> Option<(i64, i64)> {
     Some((total, v[3] + v[4]))
 }
 
-/// CPU use in % between two readings (0 when time has not moved on).
+/// CPU use in % between two readings (0 when time has not moved on). Always
+/// 0..=100: the kernel's iowait counter may step back, so idle can drop.
 pub fn cpu_use(prev: (i64, i64), now: (i64, i64)) -> i64 {
     let dt = now.0 - prev.0;
     if dt > 0 {
-        (100 * (dt - (now.1 - prev.1)) + dt / 2) / dt
+        let idle = (now.1 - prev.1).clamp(0, dt);
+        (100 * (dt - idle) + dt / 2) / dt
     } else {
         0
     }
@@ -639,6 +643,9 @@ mod tests {
             (bad.sess_reset.as_str(), bad.week_reset.as_str()),
             ("-", "-")
         );
+        // a reset time in Z form is kept, not dropped to "-"
+        let z = parse_usage("ok 42 7 2026-11-27T11:00:00Z 2026-12-01T00:00:00Z 1795766430");
+        assert_eq!(z.sess_reset, "2026-11-27T11:00:00Z");
         assert_eq!(parse_usage("").status, "wait");
         assert_eq!(parse_usage("err:HTTP429 - - - - -").status, "err:HTTP429");
         assert_eq!(parse_usage("err:bad-name 1").status, "wait");
@@ -697,6 +704,9 @@ mod tests {
         // 200 ticks later, 150 of them idle: 25 %
         assert_eq!(cpu_use((1000, 850), (1200, 1000)), 25);
         assert_eq!(cpu_use((1000, 850), (1000, 850)), 0);
+        // idle stepping back (iowait) or running ahead stays within 0..=100
+        assert_eq!(cpu_use((1000, 850), (1010, 845)), 100);
+        assert_eq!(cpu_use((1000, 850), (1010, 900)), 0);
         let m = "MemTotal:       32000000 kB\nMemFree: 1 kB\nMemAvailable:   24000000 kB\n";
         assert_eq!(ram_pct(m), 25);
         assert_eq!(ram_pct(""), 0);

@@ -2,7 +2,10 @@
 # Build a patched Tiling Shell 18.0 in ./build, and optionally install it.
 #   ./tilingshell-patch/apply.sh            build only (build/tilingshell@ferrarodomenico.com)
 #   ./tilingshell-patch/apply.sh --install  build, then copy over the installed extension
-#                                           (the old copy is kept as <dir>.bak-<date>)
+#                                           (the old copy is kept in
+#                                           gnome-shell/extension-backups/<uuid>.bak-<date>,
+#                                           outside extensions/: GNOME Shell would load
+#                                           a copy left in there and report an error)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 URL=https://github.com/domferr/tilingshell/releases/download/18.0/tilingshell@ferrarodomenico.com.zip
@@ -27,8 +30,15 @@ glib-compile-schemas "build/$UUID/schemas"
 core/build.sh   # the Rust core (WebAssembly) + its loader into build/$UUID/utils
 echo "built build/$UUID"
 if [ "${1:-}" = --install ]; then
-  DEST="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$UUID"
-  [ -d "$DEST" ] && mv "$DEST" "$DEST.bak-$(date +%Y%m%d-%H%M%S)"
+  SHELL_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell"
+  DEST="$SHELL_DATA/extensions/$UUID"
+  if [ -d "$DEST" ]; then
+    mkdir -p "$SHELL_DATA/extension-backups"
+    BAK="$SHELL_DATA/extension-backups/$UUID.bak-$(date +%Y%m%d-%H%M%S)"
+    mv "$DEST" "$BAK"
+    echo "old copy kept in $BAK"
+  fi
+  mkdir -p "$SHELL_DATA/extensions"   # a fresh user has no extensions folder yet
   cp -r "build/$UUID" "$DEST"
   echo "installed to $DEST: log out and back in (Wayland) to load it"
 fi
