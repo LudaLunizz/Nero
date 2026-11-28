@@ -516,6 +516,69 @@ fn fluid_more_cases() {
 }
 
 #[test]
+fn fluid_follows_placed_windows() {
+    let p = |x, y| Point { x, y };
+    // landscape, layout = 3 full-height columns
+    let area = r(0.0, 0.0, 1200.0, 600.0);
+    let cols = [
+        r(0.0, 0.0, 400.0, 600.0),
+        r(400.0, 0.0, 400.0, 600.0),
+        r(800.0, 0.0, 400.0, 600.0),
+    ];
+    let f = |obstacles: &[Rect], pt| fluid_shape(&cols, obstacles, &area, pt, 0.33);
+    // a full-width window on top: the space below is full width, not a column
+    let full_top = [r(0.0, 0.0, 1200.0, 250.0)];
+    assert_eq!(
+        f(&full_top, p(500.0, 400.0)),
+        Some(r(0.0, 250.0, 1200.0, 350.0))
+    );
+    assert_eq!(
+        f(&full_top, p(100.0, 500.0)),
+        Some(r(0.0, 250.0, 1200.0, 350.0))
+    );
+    // same with the full-width window at the bottom
+    let full_bottom = [r(0.0, 350.0, 1200.0, 250.0)];
+    assert_eq!(
+        f(&full_bottom, p(1000.0, 100.0)),
+        Some(r(0.0, 0.0, 1200.0, 350.0))
+    );
+    // two windows on top split at 600: the space below splits there too
+    let halves = [r(0.0, 0.0, 600.0, 250.0), r(600.0, 0.0, 600.0, 250.0)];
+    assert_eq!(
+        f(&halves, p(500.0, 400.0)),
+        Some(r(0.0, 250.0, 600.0, 350.0))
+    );
+    assert_eq!(
+        f(&halves, p(700.0, 400.0)),
+        Some(r(600.0, 250.0, 600.0, 350.0))
+    );
+    // nothing placed: the layout columns as before
+    assert_eq!(f(&[], p(500.0, 400.0)), Some(cols[1]));
+
+    // portrait: never columns, even when the layout has them
+    let tall = r(0.0, 0.0, 1080.0, 1920.0);
+    let tall_tiles = [
+        r(0.0, 0.0, 540.0, 960.0),
+        r(540.0, 0.0, 540.0, 960.0),
+        r(0.0, 960.0, 1080.0, 960.0),
+    ];
+    assert_eq!(
+        fluid_shape(&tall_tiles, &[], &tall, p(200.0, 300.0), 0.33),
+        Some(r(0.0, 0.0, 1080.0, 960.0))
+    );
+    // rows still come from the layout on portrait
+    let rows = [
+        r(0.0, 0.0, 1080.0, 640.0),
+        r(0.0, 640.0, 1080.0, 640.0),
+        r(0.0, 1280.0, 1080.0, 640.0),
+    ];
+    assert_eq!(
+        fluid_shape(&rows, &[rows[0]], &tall, p(500.0, 1000.0), 0.33),
+        Some(rows[1])
+    );
+}
+
+#[test]
 fn adjacency_more_cases() {
     let (a, b) = (r(0.0, 0.0, 300.0, 500.0), r(300.0, 600.0, 300.0, 500.0));
     assert!(!is_adjacent(&a, &b, Side::Right, 10.0), "no shared length");
