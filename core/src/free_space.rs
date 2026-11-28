@@ -363,5 +363,40 @@ pub fn fluid_shape(
     if !others.iter().any(|o| cols(o, l, r) && o.y >= b - tol) {
         b = free.bottom();
     }
+    // Follow the windows already placed (2026-11-28): the windows that border
+    // the open space above or below set its columns, so a full-width window
+    // gets a full-width neighbour instead of the layout's columns. Rows stay
+    // from the layout. Portrait screens never split into columns.
+    if area.height > area.width {
+        (l, r) = (free.x, free.right());
+    } else if let Some((nl, nr)) = follow_columns(&free, obstacles, p.x, tol) {
+        (l, r) = (nl, nr);
+    }
     Some(Rect::from_edges(l, t, r, b))
+}
+
+/// The open space's span around x, cut at the side edges of the windows that
+/// touch its top or bottom. None when no window touches it there: then the
+/// layout tiles decide the columns.
+fn follow_columns(free: &Rect, obstacles: &[Rect], x: f64, tol: f64) -> Option<(f64, f64)> {
+    let (lo, hi) = (free.x, free.right());
+    let (mut l, mut r) = (lo, hi);
+    let mut any = false;
+    for o in obstacles {
+        let touches = (o.bottom() - free.y).abs() <= tol || (o.y - free.bottom()).abs() <= tol;
+        if !touches || o.x >= hi - tol || o.right() <= lo + tol {
+            continue;
+        }
+        any = true;
+        for e in [o.x, o.right()] {
+            if e > lo + tol && e < hi - tol {
+                if e <= x {
+                    l = js_max(l, e);
+                } else {
+                    r = js_min(r, e);
+                }
+            }
+        }
+    }
+    any.then_some((l, r))
 }
